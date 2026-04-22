@@ -1,0 +1,10 @@
+.env
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+.venv/
+rag/chroma_db/
+.DS_Store
