@@ -3,241 +3,283 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Sports Booth 🏀</title>
+  <title>Sports Booth</title>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: #0a0a0f;
-      color: #e8e8f0;
-      min-height: 100vh;
+      background: #080b12;
+      color: #e2e8f0;
+      height: 100vh;
       display: flex;
       flex-direction: column;
+      overflow: hidden;
     }
 
     /* ── Header ── */
     header {
-      background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-      border-bottom: 1px solid #2a2a4a;
-      padding: 14px 24px;
+      background: #0d1117;
+      border-bottom: 1px solid #1e2433;
+      padding: 11px 20px;
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       flex-shrink: 0;
     }
-    header h1 { font-size: 1.3rem; font-weight: 700; letter-spacing: -0.02em; }
+    header h1 { font-size: 1.1rem; font-weight: 700; letter-spacing: -0.02em; }
     header h1 span { color: #f97316; }
 
     #status-dot {
-      width: 9px; height: 9px; border-radius: 50%;
+      width: 7px; height: 7px; border-radius: 50%;
       background: #374151; transition: background 0.3s; flex-shrink: 0;
     }
-    #status-dot.connected { background: #22c55e; box-shadow: 0 0 8px #22c55e88; }
+    #status-dot.connected { background: #22c55e; box-shadow: 0 0 6px #22c55e99; }
     #status-dot.error { background: #ef4444; }
-    #status-label { font-size: 0.78rem; color: #6b7280; }
+    #status-label { font-size: 0.7rem; color: #4b5563; margin-right: auto; }
 
     /* ── Game selector ── */
     #game-selector-bar {
-      background: #0f1117;
-      border-bottom: 1px solid #1f2937;
-      padding: 10px 20px;
+      background: #0d1117;
+      border-bottom: 1px solid #1e2433;
+      padding: 7px 20px;
       display: flex;
       align-items: center;
-      gap: 10px;
+      gap: 8px;
       overflow-x: auto;
       scrollbar-width: none;
       flex-shrink: 0;
-      min-height: 58px;
+      min-height: 50px;
     }
     #game-selector-bar::-webkit-scrollbar { display: none; }
 
-    #game-selector-bar .bar-label {
-      font-size: 0.7rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: #4b5563;
-      white-space: nowrap;
-      flex-shrink: 0;
-    }
-
     .game-pill {
       display: flex;
-      flex-direction: column;
       align-items: center;
-      gap: 2px;
-      background: #1a1f2e;
-      border: 1px solid #2a3040;
-      border-radius: 10px;
-      padding: 8px 14px;
+      gap: 8px;
+      background: #131924;
+      border: 1px solid #1e2a3a;
+      border-radius: 7px;
+      padding: 6px 12px;
       cursor: pointer;
-      transition: all 0.18s ease;
+      transition: all 0.15s;
       flex-shrink: 0;
-      min-width: 110px;
-      text-align: center;
-    }
-    .game-pill:hover { border-color: #4b5563; background: #1f2535; }
-    .game-pill.selected {
-      border-color: #f97316;
-      background: #1f1510;
-      box-shadow: 0 0 0 1px #f97316;
-    }
-    .game-pill .pill-teams {
-      font-size: 0.9rem;
-      font-weight: 700;
-      color: #f9fafb;
-      letter-spacing: 0.02em;
-    }
-    .game-pill .pill-score {
-      font-size: 1rem;
-      font-weight: 800;
-      color: #f97316;
-      line-height: 1;
-    }
-    .game-pill .pill-status {
-      font-size: 0.65rem;
-      color: #6b7280;
       white-space: nowrap;
     }
+    .game-pill:hover { border-color: #374151; background: #182030; }
+    .game-pill.selected { border-color: #f97316; background: #1a120a; }
+    .game-pill .pt { font-size: 0.78rem; font-weight: 600; color: #94a3b8; }
+    .game-pill .ps { font-size: 0.95rem; font-weight: 800; color: #f97316; }
+    .game-pill .pq { font-size: 0.62rem; color: #4b5563; }
+    .pill-sep { width: 1px; height: 14px; background: #1e2a3a; flex-shrink: 0; }
 
-    #no-games-msg {
-      font-size: 0.82rem;
-      color: #4b5563;
-      padding: 4px 0;
-    }
+    #no-games-msg { font-size: 0.78rem; color: #374151; }
 
-    /* ── Event ticker ── */
+    /* ── Event banner ── */
     #event-banner {
-      background: #111827;
-      border-bottom: 1px solid #1f2937;
-      padding: 10px 24px;
-      min-height: 48px;
+      background: #0a0e16;
+      border-bottom: 1px solid #1e2433;
+      padding: 8px 20px;
       display: flex;
       align-items: center;
       gap: 10px;
       flex-shrink: 0;
+      min-height: 42px;
     }
-    #event-banner .tag {
-      background: #f97316;
-      color: #fff;
-      font-size: 0.62rem;
+    .etag {
+      font-size: 0.58rem;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.08em;
-      padding: 3px 7px;
-      border-radius: 4px;
+      letter-spacing: 0.1em;
+      padding: 2px 6px;
+      border-radius: 3px;
       flex-shrink: 0;
     }
-    #event-text { font-size: 0.9rem; color: #d1d5db; line-height: 1.4; }
-    #score-badge {
-      margin-left: auto;
-      font-size: 1rem;
-      font-weight: 700;
-      color: #f9fafb;
+    .etag.scoring_run   { background: #7f1d1d; color: #fca5a5; }
+    .etag.quarter_start { background: #1e3a5f; color: #93c5fd; }
+    .etag.close_game    { background: #78350f; color: #fcd34d; }
+    .etag.game_update   { background: #1a2030; color: #4b5563; }
+    .etag.default       { background: #7c2d12; color: #fdba74; }
+
+    #event-text {
+      font-size: 0.82rem;
+      color: #94a3b8;
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
       white-space: nowrap;
     }
+    #score-badge { font-size: 0.85rem; font-weight: 700; color: #e2e8f0; white-space: nowrap; flex-shrink: 0; }
 
-    /* ── Commentary columns ── */
+    /* ── Columns ── */
     main {
       flex: 1;
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 0;
       overflow: hidden;
+      min-height: 0;
     }
 
     .agent-col {
       display: flex;
       flex-direction: column;
-      border-right: 1px solid #1f2937;
+      border-right: 1px solid #1e2433;
+      overflow: hidden;
+      min-height: 0;
     }
     .agent-col:last-child { border-right: none; }
 
     .agent-header {
-      padding: 12px 18px 9px;
+      padding: 9px 16px 8px;
       border-bottom: 2px solid;
       display: flex;
       align-items: center;
-      gap: 9px;
+      gap: 8px;
       flex-shrink: 0;
     }
-    .agent-header .emoji { font-size: 1.2rem; }
-    .agent-header .name { font-weight: 700; font-size: 0.9rem; }
-    .agent-header .role { font-size: 0.68rem; color: #9ca3af; margin-top: 1px; }
+    .agent-header .emoji { font-size: 1rem; }
+    .agent-header .name { font-weight: 700; font-size: 0.82rem; }
+    .agent-header .role { font-size: 0.6rem; color: #4b5563; margin-top: 1px; }
 
-    #col-analyst   .agent-header { border-color: #3b82f6; background: #0f172a; }
-    #col-historian .agent-header { border-color: #22c55e; background: #0a1a10; }
-    #col-degenerate .agent-header { border-color: #f97316; background: #1a0f05; }
+    #col-analyst    .agent-header { border-color: #2563eb; background: #0a1220; }
+    #col-historian  .agent-header { border-color: #16a34a; background: #071410; }
+    #col-degenerate .agent-header { border-color: #ea6c10; background: #150e06; }
 
-    .feed {
-      flex: 1;
-      overflow-y: auto;
-      padding: 14px 18px;
-      display: flex;
-      flex-direction: column;
-      gap: 14px;
+    /* ── Current card (main focus) ── */
+    .current-wrap {
+      padding: 12px 14px 10px;
+      flex-shrink: 0;
     }
 
-    .card {
-      background: #111827;
-      border-radius: 10px;
+    .current-card {
+      background: #0f1624;
+      border-radius: 9px;
       padding: 13px 15px;
       border-left: 3px solid;
-      animation: slideIn 0.3s ease;
+      animation: slideIn 0.25s ease;
     }
     @keyframes slideIn {
-      from { opacity: 0; transform: translateY(6px); }
+      from { opacity: 0; transform: translateY(-5px); }
       to   { opacity: 1; transform: translateY(0); }
     }
-    #col-analyst    .card { border-color: #3b82f6; }
-    #col-historian  .card { border-color: #22c55e; }
-    #col-degenerate .card { border-color: #f97316; }
+    #col-analyst    .current-card { border-color: #2563eb; }
+    #col-historian  .current-card { border-color: #16a34a; }
+    #col-degenerate .current-card { border-color: #ea6c10; }
 
-    .card .card-event {
-      font-size: 0.67rem;
-      color: #6b7280;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      margin-bottom: 7px;
+    .current-card .ct {
+      font-size: 0.87rem;
+      line-height: 1.65;
+      color: #cbd5e1;
     }
-    .card .card-text {
-      font-size: 0.88rem;
-      line-height: 1.6;
-      color: #e5e7eb;
-    }
+    .current-card .ct p { margin-bottom: 0.35em; }
+    .current-card .ct p:last-child { margin-bottom: 0; }
+    .current-card .ct strong { color: #f1f5f9; font-weight: 600; }
+    .current-card .ct em { color: #94a3b8; }
 
     .thinking {
       display: flex;
       align-items: center;
-      gap: 8px;
-      padding: 8px 0;
-      color: #6b7280;
-      font-size: 0.8rem;
+      gap: 7px;
+      padding: 10px 2px;
+      color: #374151;
+      font-size: 0.72rem;
     }
-    .dot-flashing { display: flex; gap: 4px; }
-    .dot-flashing span {
-      width: 5px; height: 5px; border-radius: 50%;
-      background: #4b5563;
+    .dots { display: flex; gap: 3px; }
+    .dots span {
+      width: 4px; height: 4px; border-radius: 50%;
+      background: #374151;
       animation: blink 1.2s infinite;
     }
-    .dot-flashing span:nth-child(2) { animation-delay: 0.2s; }
-    .dot-flashing span:nth-child(3) { animation-delay: 0.4s; }
+    .dots span:nth-child(2) { animation-delay: 0.2s; }
+    .dots span:nth-child(3) { animation-delay: 0.4s; }
     @keyframes blink {
-      0%, 80%, 100% { opacity: 0.2; }
+      0%, 80%, 100% { opacity: 0.15; }
       40% { opacity: 1; }
     }
 
-    .empty {
-      color: #374151;
-      font-size: 0.82rem;
-      text-align: center;
-      margin-top: 36px;
+    /* ── Chart ── */
+    .chart-wrap {
+      margin-top: 10px;
+      padding-top: 10px;
+      border-top: 1px solid #111825;
+      position: relative;
     }
 
+    /* Line movement (HTML, no canvas) */
+    .lm-inner { padding: 2px 0; }
+    .lm-label {
+      font-size: 0.6rem; text-transform: uppercase; letter-spacing: 0.08em;
+      color: #374151; margin-bottom: 8px; font-weight: 700;
+    }
+    .lm-row { display: flex; align-items: center; gap: 10px; }
+    .lm-col { text-align: center; min-width: 52px; }
+    .lm-val-num { font-size: 1.35rem; font-weight: 800; color: #94a3b8; line-height: 1; }
+    .lm-val-lbl { font-size: 0.57rem; color: #374151; margin-top: 3px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .lm-arr { font-size: 0.9rem; color: #2a3548; flex: 1; text-align: center; }
+    .lm-delta {
+      font-size: 0.7rem; font-weight: 700; margin-left: auto;
+      padding: 2px 8px; background: #0d1117; border-radius: 4px;
+    }
+
+    /* ── History list (compact) ── */
+    .history-wrap {
+      flex: 1;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: #1e2433 transparent;
+      min-height: 0;
+      border-top: 1px solid #111825;
+    }
+    .history-wrap::-webkit-scrollbar { width: 3px; }
+    .history-wrap::-webkit-scrollbar-thumb { background: #1e2433; border-radius: 2px; }
+
+    .history-hdr {
+      font-size: 0.58rem;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.09em;
+      color: #2a3548;
+      padding: 7px 14px 3px;
+    }
+
+    .hist-item {
+      padding: 7px 14px;
+      border-bottom: 1px solid #0d1117;
+      cursor: pointer;
+      transition: background 0.12s;
+    }
+    .hist-item:hover { background: #0e1520; }
+    .hist-item .hi-label {
+      font-size: 0.58rem;
+      color: #2a3548;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 2px;
+    }
+    .hist-item .hi-text {
+      font-size: 0.75rem;
+      color: #4b5563;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      line-height: 1.4;
+    }
+    .hist-item.open .hi-text {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: unset;
+      color: #64748b;
+    }
+
+    .empty { font-size: 0.75rem; color: #1e2433; padding: 14px; text-align: center; }
+
     @media (max-width: 768px) {
+      body { overflow-y: auto; height: auto; }
       main { grid-template-columns: 1fr; }
-      .agent-col { border-right: none; border-bottom: 1px solid #1f2937; }
+      .agent-col { border-right: none; border-bottom: 1px solid #1e2433; }
     }
   </style>
 </head>
@@ -249,16 +291,13 @@
   <span id="status-label">Connecting…</span>
 </header>
 
-<!-- Game selector -->
 <div id="game-selector-bar">
-  <span class="bar-label">Games</span>
   <span id="no-games-msg">Waiting for live games…</span>
 </div>
 
-<!-- Event ticker for selected game -->
 <div id="event-banner">
-  <span class="tag">Live</span>
-  <span id="event-text">Select a game above to see commentary</span>
+  <span class="etag default" id="event-tag">Live</span>
+  <span id="event-text">Select a game to see commentary</span>
   <span id="score-badge"></span>
 </div>
 
@@ -266,225 +305,411 @@
   <div class="agent-col" id="col-analyst">
     <div class="agent-header">
       <span class="emoji">📊</span>
-      <div>
-        <div class="name">The Analyst</div>
-        <div class="role">Live stats · eFG% · lineup splits</div>
-      </div>
+      <div><div class="name">The Analyst</div><div class="role">Live stats · eFG% · lineup splits</div></div>
     </div>
-    <div class="feed" id="feed-analyst">
-      <div class="empty">Select a game above</div>
-    </div>
+    <div class="current-wrap" id="cw-analyst"><div class="empty">Waiting for commentary…</div></div>
+    <div class="history-wrap" id="hw-analyst"></div>
   </div>
 
   <div class="agent-col" id="col-historian">
     <div class="agent-header">
       <span class="emoji">📚</span>
-      <div>
-        <div class="name">The Historian</div>
-        <div class="role">Historical context · records · precedents</div>
-      </div>
+      <div><div class="name">The Historian</div><div class="role">Historical context · records · precedents</div></div>
     </div>
-    <div class="feed" id="feed-historian">
-      <div class="empty">Select a game above</div>
-    </div>
+    <div class="current-wrap" id="cw-historian"><div class="empty">Waiting for commentary…</div></div>
+    <div class="history-wrap" id="hw-historian"></div>
   </div>
 
   <div class="agent-col" id="col-degenerate">
     <div class="agent-header">
       <span class="emoji">🎲</span>
-      <div>
-        <div class="name">The Degenerate</div>
-        <div class="role">Live lines · spread movement · sharp money</div>
-      </div>
+      <div><div class="name">The Degenerate</div><div class="role">Live lines · spread movement · sharp money</div></div>
     </div>
-    <div class="feed" id="feed-degenerate">
-      <div class="empty">Select a game above</div>
-    </div>
+    <div class="current-wrap" id="cw-degenerate"><div class="empty">Waiting for commentary…</div></div>
+    <div class="history-wrap" id="hw-degenerate"></div>
   </div>
 </main>
 
 <script>
-  // ── State ──────────────────────────────────────────────────────────────────
+  // ── Chart.js dark theme defaults ───────────────────────────────────────────
+  if (typeof Chart !== 'undefined') {
+    Chart.defaults.color = '#64748b';
+    Chart.defaults.borderColor = '#1e2433';
+    Chart.defaults.font.family = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+  }
+
   let selectedGameId = null;
-
-  // Per-game card history: gameId → { analyst: [], historian: [], degenerate: [] }
-  const history = {};
-  // Per-game latest event label
+  const gameHistory = {};   // gameId → { analyst: [], historian: [], degenerate: [] }
   const latestEvent = {};
-  // Per-game latest score badge
   const latestScore = {};
-  // Per-game pill data
-  let currentGames = [];
+  const latestType  = {};
 
-  // ── DOM refs ───────────────────────────────────────────────────────────────
   const statusDot   = document.getElementById('status-dot');
   const statusLabel = document.getElementById('status-label');
   const selectorBar = document.getElementById('game-selector-bar');
   const noGamesMsg  = document.getElementById('no-games-msg');
+  const eventTag    = document.getElementById('event-tag');
   const eventText   = document.getElementById('event-text');
   const scoreBadge  = document.getElementById('score-badge');
-  const feeds = {
-    analyst:    document.getElementById('feed-analyst'),
-    historian:  document.getElementById('feed-historian'),
-    degenerate: document.getElementById('feed-degenerate'),
+
+  const roles = ['analyst', 'historian', 'degenerate'];
+  const cw = {}, hw = {};
+  roles.forEach(r => {
+    cw[r] = document.getElementById(`cw-${r}`);
+    hw[r] = document.getElementById(`hw-${r}`);
+  });
+
+  // ── Utilities ──────────────────────────────────────────────────────────────
+  function toPlain(html) {
+    const d = document.createElement('div');
+    d.innerHTML = html;
+    return (d.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  function tagClass(type) {
+    return ['scoring_run','quarter_start','close_game','game_update'].includes(type) ? type : 'default';
+  }
+
+  function tagLabel(type) {
+    const map = { scoring_run: 'Run', quarter_start: 'Quarter', close_game: 'Crunch', game_update: 'Update' };
+    return map[type] || 'Live';
+  }
+
+  // ── Chart tracking ─────────────────────────────────────────────────────────
+  const chartInstances = {};  // role → Chart.js instance
+
+  function clearChart(role) {
+    if (chartInstances[role]) {
+      chartInstances[role].destroy();
+      delete chartInstances[role];
+    }
+  }
+
+  // ── Chart data parsing ─────────────────────────────────────────────────────
+  function parseChartData(text) {
+    const match = text.match(/\[CHART\]([\s\S]*?)\[\/CHART\]/);
+    if (!match) return { cleanText: text, chart: null };
+    const cleanText = text.replace(/\[CHART\][\s\S]*?\[\/CHART\]/, '').trim();
+    try {
+      return { cleanText, chart: JSON.parse(match[1].trim()) };
+    } catch {
+      return { cleanText, chart: null };
+    }
+  }
+
+  // ── Chart renderers ────────────────────────────────────────────────────────
+  const _colors = {
+    analyst:    { main: '#2563eb', muted: 'rgba(37,99,235,0.22)',  grid: '#0e1628' },
+    historian:  { main: '#16a34a', muted: 'rgba(22,163,74,0.22)',  grid: '#0a1a10' },
+    degenerate: { main: '#ea6c10', muted: 'rgba(234,108,16,0.22)', grid: '#1a1008' },
   };
 
-  // ── Game selector rendering ────────────────────────────────────────────────
-  function renderSelector(games) {
-    currentGames = games;
+  function _titleCfg(text) {
+    return { display: !!text, text: text || '', color: '#64748b', font: { size: 10, weight: '600' }, padding: { bottom: 4 } };
+  }
 
-    // Remove existing pills (keep the label + no-games-msg)
-    selectorBar.querySelectorAll('.game-pill').forEach(el => el.remove());
+  function renderStatBars(wrap, data, c) {
+    const items = (data.items || []).slice(0, 5);
+    wrap.style.height = `${Math.max(80, items.length * 28 + 36)}px`;
+    const canvas = document.createElement('canvas');
+    wrap.appendChild(canvas);
+    return new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: items.map(i => i.label),
+        datasets: [{
+          data: items.map(i => i.value),
+          backgroundColor: c.muted,
+          borderColor: c.main,
+          borderWidth: 1,
+          borderRadius: 3,
+        }]
+      },
+      options: {
+        indexAxis: 'y',
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, title: _titleCfg(data.title) },
+        scales: {
+          x: { grid: { color: c.grid }, ticks: { color: '#4b5563', font: { size: 10 } }, border: { color: '#1e2433' } },
+          y: { grid: { display: false }, ticks: { color: '#94a3b8', font: { size: 10 } }, border: { display: false } },
+        }
+      }
+    });
+  }
 
-    if (!games.length) {
-      noGamesMsg.style.display = '';
-      return;
+  function renderWinProb(wrap, data, c) {
+    wrap.style.height = '140px';
+    const canvas = document.createElement('canvas');
+    wrap.appendChild(canvas);
+    const homeP = Math.round(Math.max(1, Math.min(99, (data.home_prob || 0.5) * 100)));
+    const awayP = 100 - homeP;
+    return new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels: [`${data.home || 'Home'} ${homeP}%`, `${data.away || 'Away'} ${awayP}%`],
+        datasets: [{
+          data: [homeP, awayP],
+          backgroundColor: [c.main, '#1a2233'],
+          borderWidth: 0,
+          hoverOffset: 2,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '68%',
+        plugins: {
+          legend: {
+            display: true, position: 'right',
+            labels: { color: '#64748b', font: { size: 10 }, boxWidth: 10, padding: 8 }
+          },
+          title: _titleCfg('Win Probability'),
+        }
+      }
+    });
+  }
+
+  function renderHistoricalBar(wrap, data, c) {
+    const items = (data.items || []).slice(0, 6);
+    wrap.style.height = '130px';
+    const canvas = document.createElement('canvas');
+    wrap.appendChild(canvas);
+    return new Chart(canvas, {
+      type: 'bar',
+      data: {
+        labels: items.map(i => i.label),
+        datasets: [{
+          data: items.map(i => i.value),
+          backgroundColor: items.map(i => i.highlight ? c.main : c.muted),
+          borderColor:     items.map(i => i.highlight ? c.main : 'transparent'),
+          borderWidth: 1,
+          borderRadius: 3,
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: false }, title: _titleCfg(data.title) },
+        scales: {
+          x: {
+            grid: { display: false },
+            ticks: { color: '#4b5563', font: { size: 9 }, maxRotation: 20 },
+            border: { color: '#1e2433' }
+          },
+          y: {
+            grid: { color: c.grid },
+            ticks: { color: '#4b5563', font: { size: 10 }, stepSize: 1, precision: 0 },
+            border: { color: '#1e2433' }
+          }
+        }
+      }
+    });
+  }
+
+  function renderLineMovement(wrap, data, c) {
+    const fav  = data.favorite || '?';
+    const open = data.open    != null ? data.open    : null;
+    const curr = data.current != null ? data.current : null;
+    const fmt  = v => v == null ? '—' : (v > 0 ? `+${v}` : `${v}`);
+    const moved = (open != null && curr != null) ? Math.abs(curr - open).toFixed(1) : null;
+    const tighter = curr != null && open != null && Math.abs(curr) > Math.abs(open);
+    const dirColor = tighter ? '#ef4444' : '#22c55e';
+    const arrow    = tighter ? '▼' : '▲';
+    wrap.innerHTML = `
+      <div class="lm-inner">
+        <div class="lm-label">Spread — ${fav}</div>
+        <div class="lm-row">
+          <div class="lm-col">
+            <div class="lm-val-num">${fmt(open)}</div>
+            <div class="lm-val-lbl">Open</div>
+          </div>
+          <div class="lm-arr">→</div>
+          <div class="lm-col">
+            <div class="lm-val-num" style="color:${c.main}">${fmt(curr)}</div>
+            <div class="lm-val-lbl">Current</div>
+          </div>
+          ${moved ? `<div class="lm-delta" style="color:${dirColor}">${arrow} ${moved} pts</div>` : ''}
+        </div>
+      </div>`;
+    return null;
+  }
+
+  function renderChart(wrap, chartData, role) {
+    const c = _colors[role] || _colors.analyst;
+    try {
+      switch (chartData.type) {
+        case 'stat_bars':      return renderStatBars(wrap, chartData, c);
+        case 'win_prob':       return renderWinProb(wrap, chartData, c);
+        case 'historical_bar': return renderHistoricalBar(wrap, chartData, c);
+        case 'line_movement':  return renderLineMovement(wrap, chartData, c);
+        default: return null;
+      }
+    } catch (e) {
+      console.warn('Chart render error:', e);
+      return null;
     }
+  }
+
+  // ── Game selector ──────────────────────────────────────────────────────────
+  function renderSelector(games) {
+    selectorBar.querySelectorAll('.game-pill').forEach(el => el.remove());
+    if (!games.length) { noGamesMsg.style.display = ''; return; }
     noGamesMsg.style.display = 'none';
 
     games.forEach(g => {
       const pill = document.createElement('div');
       pill.className = 'game-pill' + (g.gameId === selectedGameId ? ' selected' : '');
       pill.dataset.gameId = g.gameId;
-
-      const scoreStr = g.quarter > 0
-        ? `${g.awayScore} – ${g.homeScore}`
-        : '–';
-      const statusStr = g.quarter > 0
-        ? `Q${g.quarter}${g.clock ? ' ' + g.clock : ''}`
-        : g.status || 'Pre-game';
-
+      const score = g.quarter > 0 ? `${g.awayScore}–${g.homeScore}` : '–';
+      const qstr  = g.quarter > 0 ? `Q${g.quarter}${g.clock ? ' ' + g.clock : ''}` : g.status || '';
       pill.innerHTML = `
-        <div class="pill-teams">${g.label}</div>
-        <div class="pill-score">${scoreStr}</div>
-        <div class="pill-status">${statusStr}</div>
-      `;
-
+        <div class="pt">${g.label}</div>
+        <div class="pill-sep"></div>
+        <div class="ps">${score}</div>
+        <div class="pq">${qstr}</div>`;
       pill.addEventListener('click', () => selectGame(g.gameId));
       selectorBar.appendChild(pill);
     });
 
-    // Auto-select first game if nothing selected yet
-    if (!selectedGameId && games.length) {
-      selectGame(games[0].gameId);
-    }
+    if (!selectedGameId && games.length) selectGame(games[0].gameId);
   }
 
-  function updatePillScore(gameId, homeScore, awayScore, quarter, clock) {
+  function updatePill(gameId, home, away, q, clock) {
     const pill = selectorBar.querySelector(`.game-pill[data-game-id="${gameId}"]`);
     if (!pill) return;
-    const scoreEl  = pill.querySelector('.pill-score');
-    const statusEl = pill.querySelector('.pill-status');
-    if (scoreEl)  scoreEl.textContent  = `${awayScore} – ${homeScore}`;
-    if (statusEl) statusEl.textContent = quarter > 0 ? `Q${quarter}${clock ? ' ' + clock : ''}` : '';
+    const s = pill.querySelector('.ps'), q2 = pill.querySelector('.pq');
+    if (s)  s.textContent  = `${away}–${home}`;
+    if (q2) q2.textContent = q > 0 ? `Q${q}${clock ? ' ' + clock : ''}` : '';
   }
 
-  // ── Game selection ─────────────────────────────────────────────────────────
+  // ── Select game ────────────────────────────────────────────────────────────
   function selectGame(gameId) {
     selectedGameId = gameId;
+    selectorBar.querySelectorAll('.game-pill').forEach(p =>
+      p.classList.toggle('selected', p.dataset.gameId === gameId));
 
-    // Update pill highlight
-    selectorBar.querySelectorAll('.game-pill').forEach(p => {
-      p.classList.toggle('selected', p.dataset.gameId === gameId);
-    });
-
-    // Restore event banner for this game
+    const type = latestType[gameId] || 'default';
+    eventTag.className = `etag ${tagClass(type)}`;
+    eventTag.textContent = tagLabel(type);
     eventText.textContent = latestEvent[gameId] || 'Waiting for events…';
     scoreBadge.textContent = latestScore[gameId] || '';
 
-    // Re-render feeds from history
-    ['analyst', 'historian', 'degenerate'].forEach(role => {
-      const feed = feeds[role];
-      feed.innerHTML = '';
-      const cards = history[gameId]?.[role] || [];
+    roles.forEach(role => {
+      clearChart(role);
+      const cards = gameHistory[gameId]?.[role] || [];
       if (!cards.length) {
-        feed.innerHTML = '<div class="empty">Waiting for commentary…</div>';
+        cw[role].innerHTML = '<div class="empty">Waiting for commentary…</div>';
+        hw[role].innerHTML = '';
       } else {
-        cards.forEach(c => feed.appendChild(cloneCard(c)));
-        feed.scrollTop = feed.scrollHeight;
+        setCurrentCard(role, cards[cards.length - 1].text);
+        buildHistory(role, cards.slice(0, -1).reverse());
       }
     });
   }
 
-  // ── Card management ────────────────────────────────────────────────────────
-  function cloneCard({ eventLabel, text }) {
+  // ── Render helpers ─────────────────────────────────────────────────────────
+  function setCurrentCard(role, rawText) {
+    clearChart(role);
+    const { cleanText, chart } = parseChartData(rawText);
+
+    cw[role].innerHTML = '';
     const card = document.createElement('div');
-    card.className = 'card';
-    card.innerHTML = `
-      <div class="card-event">${eventLabel}</div>
-      <div class="card-text">${text.replace(/\n/g, '<br>')}</div>
-    `;
-    return card;
+    card.className = 'current-card';
+
+    const textDiv = document.createElement('div');
+    textDiv.className = 'ct';
+    textDiv.innerHTML = marked.parse(cleanText);
+    card.appendChild(textDiv);
+
+    if (chart) {
+      // Append card to DOM first so Chart.js can measure the canvas
+      cw[role].appendChild(card);
+      const chartWrap = document.createElement('div');
+      chartWrap.className = 'chart-wrap';
+      card.appendChild(chartWrap);
+      const instance = renderChart(chartWrap, chart, role);
+      if (instance) chartInstances[role] = instance;
+    } else {
+      cw[role].appendChild(card);
+    }
   }
 
-  let thinkingEls = {};
+  function buildHistory(role, cards) {
+    const wrap = hw[role];
+    wrap.innerHTML = '';
+    if (!cards.length) return;
 
-  function showThinking() {
-    ['analyst', 'historian', 'degenerate'].forEach(role => {
-      feeds[role].querySelectorAll('.empty').forEach(el => el.remove());
-      const el = document.createElement('div');
-      el.className = 'thinking';
-      el.innerHTML = `<div class="dot-flashing"><span></span><span></span><span></span></div>Analyzing…`;
-      feeds[role].appendChild(el);
-      feeds[role].scrollTop = feeds[role].scrollHeight;
-      thinkingEls[role] = el;
+    const hdr = document.createElement('div');
+    hdr.className = 'history-hdr';
+    hdr.textContent = `${cards.length} previous`;
+    wrap.appendChild(hdr);
+
+    cards.forEach(({ eventLabel, text }) => {
+      const { cleanText } = parseChartData(text);  // strip chart block for plain preview
+      const plain = toPlain(marked.parse(cleanText));
+      const item = document.createElement('div');
+      item.className = 'hist-item';
+      item.innerHTML = `
+        <div class="hi-label">${eventLabel}</div>
+        <div class="hi-text">${plain}</div>`;
+      item.addEventListener('click', () => item.classList.toggle('open'));
+      wrap.appendChild(item);
     });
   }
 
-  function addCard(role, gameId, eventLabel, text) {
-    if (thinkingEls[role]) { thinkingEls[role].remove(); delete thinkingEls[role]; }
-
-    // Store in history
-    if (!history[gameId]) history[gameId] = { analyst: [], historian: [], degenerate: [] };
-    const cardData = { eventLabel, text };
-    history[gameId][role].push(cardData);
-
-    // Only render if this game is selected
-    if (gameId !== selectedGameId) return;
-    const card = cloneCard(cardData);
-    feeds[role].appendChild(card);
-    feeds[role].scrollTop = feeds[role].scrollHeight;
+  // ── Thinking indicator ─────────────────────────────────────────────────────
+  function showThinking() {
+    roles.forEach(role => {
+      clearChart(role);
+      const el = document.createElement('div');
+      el.className = 'thinking';
+      el.innerHTML = `<div class="dots"><span></span><span></span><span></span></div>Analyzing…`;
+      cw[role].innerHTML = '';
+      cw[role].appendChild(el);
+    });
   }
 
-  // ── WebSocket message handlers ─────────────────────────────────────────────
+  // ── Add commentary card ────────────────────────────────────────────────────
+  function addCard(role, gameId, eventLabel, text) {
+    if (!gameHistory[gameId]) gameHistory[gameId] = { analyst: [], historian: [], degenerate: [] };
+    gameHistory[gameId][role].push({ eventLabel, text });
+
+    if (gameId !== selectedGameId) return;
+    const cards = gameHistory[gameId][role];
+    setCurrentCard(role, cards[cards.length - 1].text);
+    buildHistory(role, cards.slice(0, -1).reverse());
+  }
+
+  // ── WebSocket handlers ─────────────────────────────────────────────────────
   function handleGames(games) {
     renderSelector(games);
-    // Update pill scores for any game we already know about
-    games.forEach(g => updatePillScore(g.gameId, g.homeScore, g.awayScore, g.quarter, g.clock));
+    games.forEach(g => updatePill(g.gameId, g.homeScore, g.awayScore, g.quarter, g.clock));
   }
 
   function handleEvent(data) {
     const gameId = data.game_id;
-    const score = data.score
+    const label  = data.event || data.type || 'Game Event';
+    const score  = data.score
       ? Object.entries(data.score).map(([k,v]) => `${k} ${v}`).join(' — ')
       : '';
-    const label = data.event || data.type || 'Game Event';
 
-    latestEvent[gameId] = `${data.game || ''} · ${label}`;
+    latestEvent[gameId] = label;
+    latestType[gameId]  = data.type || 'default';
     latestScore[gameId] = score
       ? `${score}  ·  Q${data.quarter}${data.time_remaining ? ' ' + data.time_remaining : ''}`
       : '';
 
-    // Update pill score
     if (data.score) {
-      const teams = Object.keys(data.score);
-      // We don't know which is home/away from the event, but pill already has order from games msg
-      const pill = selectorBar.querySelector(`.game-pill[data-game-id="${gameId}"]`);
-      if (pill && data.score) {
-        const vals = Object.values(data.score);
-        if (vals.length === 2) {
-          const scoreEl = pill.querySelector('.pill-score');
-          if (scoreEl) scoreEl.textContent = `${vals[0]} – ${vals[1]}`;
-        }
-        const statusEl = pill.querySelector('.pill-status');
-        if (statusEl && data.quarter)
-          statusEl.textContent = `Q${data.quarter}${data.time_remaining ? ' ' + data.time_remaining : ''}`;
-      }
+      const vals = Object.values(data.score);
+      if (vals.length === 2) updatePill(gameId, vals[0], vals[1], data.quarter, data.time_remaining);
     }
 
     if (gameId !== selectedGameId) return;
-
-    eventText.textContent = latestEvent[gameId];
+    const type = data.type || 'default';
+    eventTag.className = `etag ${tagClass(type)}`;
+    eventTag.textContent = tagLabel(type);
+    eventText.textContent = label;
     scoreBadge.textContent = latestScore[gameId];
     showThinking();
   }
@@ -492,38 +717,35 @@
   function handleCommentary(data) {
     const gameId = data.event?.game_id;
     if (!gameId) return;
-    const eventLabel = latestEvent[gameId] || 'Game event';
-    addCard('analyst',    gameId, eventLabel, data.analyst    || '—');
-    addCard('historian',  gameId, eventLabel, data.historian  || '—');
-    addCard('degenerate', gameId, eventLabel, data.degenerate || '—');
+    const label = latestEvent[gameId] || 'Game event';
+    addCard('analyst',    gameId, label, data.analyst    || '—');
+    addCard('historian',  gameId, label, data.historian  || '—');
+    addCard('degenerate', gameId, label, data.degenerate || '—');
   }
 
   function handleStatus(msg) {
+    eventTag.className = 'etag game_update';
+    eventTag.textContent = 'Info';
     eventText.textContent = msg;
     scoreBadge.textContent = '';
   }
 
   // ── WebSocket connection ───────────────────────────────────────────────────
-  function setStatus(state, label) {
-    statusDot.className = state;
-    statusLabel.textContent = label;
-  }
+  function setStatus(state, label) { statusDot.className = state; statusLabel.textContent = label; }
 
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
-
     ws.onopen  = () => setStatus('connected', 'Live');
-    ws.onclose = () => { setStatus('error', 'Disconnected — retrying in 3s…'); setTimeout(connect, 3000); };
+    ws.onclose = () => { setStatus('error', 'Disconnected — retrying…'); setTimeout(connect, 3000); };
     ws.onerror = () => setStatus('error', 'Connection error');
-
-    ws.onmessage = (e) => {
+    ws.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
-        if      (msg.type === 'games')       handleGames(msg.data);
-        else if (msg.type === 'event')       handleEvent(msg.data);
-        else if (msg.type === 'commentary')  handleCommentary(msg.data);
-        else if (msg.type === 'status')      handleStatus(msg.message);
+        if      (msg.type === 'games')      handleGames(msg.data);
+        else if (msg.type === 'event')      handleEvent(msg.data);
+        else if (msg.type === 'commentary') handleCommentary(msg.data);
+        else if (msg.type === 'status')     handleStatus(msg.message);
       } catch {}
     };
   }
