@@ -78,10 +78,11 @@ class EventDetector:
         hs, as_ = home.get("score", 0) or 0, away.get("score", 0) or 0
         hc, ac = home.get("teamTricode", "HOME"), away.get("teamTricode", "AWAY")
 
-        def make(etype: str, text: str, context: str) -> dict:
+        def make(etype: str, text: str, context: str, **extra) -> dict:
             st.last_event_at = now
             return {"type": etype, "game": label, "game_id": gid, "quarter": period,
-                    "time_remaining": clock, "score": score, "event": text, "context": context}
+                    "time_remaining": clock, "score": score, "event": text, "context": context,
+                    **extra}
 
         st = self._state.get(gid)
 
@@ -100,7 +101,8 @@ class EventDetector:
             st = self._state[gid] = _GameState(period=period)
             st.history.append((now, hs, as_))
             return make("game_update", f"{label} is live — {status}",
-                        f"Joining the broadcast in Q{period}. Score: {ac} {as_} — {hc} {hs}")
+                        f"Joining the broadcast in Q{period}. Score: {ac} {as_} — {hc} {hs}",
+                        join=True)
 
         prev_ts, prev_hs, prev_as = st.history[-1]
         scored = (hs - prev_hs) + (as_ - prev_as) > 0

@@ -7,6 +7,7 @@ seen, so "opening" lines and line movement are real). Snapshots live in data/odd
 import os
 import sqlite3
 import statistics
+import threading
 import time
 from pathlib import Path
 
@@ -126,11 +127,25 @@ def record_snapshots(events: list[dict], now: float | None = None) -> None:
         )
 
 
+SNAPSHOT_TTL_S = float(os.getenv("BOOTH_ODDS_TTL", "60"))
+_last: dict = {"at": float("-inf"), "events": []}
+_last_lock = threading.Lock()
+
+
 def snapshot_now(api_key: str) -> list[dict]:
-    """Fetch current odds and record them. Returns the normalized events."""
-    events = fetch_events(api_key)
-    record_snapshots(events)
-    return events
+    """Fetch current odds and record them. Returns the normalized events.
+
+    Rate-limited per process: the Odds API free tier is ~500 requests/month and every betting
+    tool call used to spend one. Within SNAPSHOT_TTL_S the previous result is reused (and not
+    re-recorded as a new snapshot).
+    """
+    with _last_lock:
+        if time.monotonic() - _last["at"] < SNAPSHOT_TTL_S:
+            return _last["events"]
+        events = fetch_events(api_key)
+        record_snapshots(events)
+        _last.update(at=time.monotonic(), events=events)
+        return events
 
 
 def movement(event_id: str) -> dict | None:
