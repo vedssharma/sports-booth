@@ -26,9 +26,15 @@ uv run python main.py --interval 30
 # Spawn MCP servers per agent run instead of keeping them running
 uv run python main.py --stdio-mcp
 
-# Tests / lint
+# Validate configuration and show effective settings (secrets masked)
+uv run python main.py --check-config
+
+# Tests / lint (CI runs both)
 uv run pytest
-uv run ruff check --select F .
+uv run ruff check .
+
+# Container
+docker compose up --build
 ```
 
 ## Architecture
@@ -77,18 +83,22 @@ main.py                    args; starts MCP servers (booth/mcp_host.py) then web
 ## Environment
 
 ```
-ANTHROPIC_API_KEY   required
+ANTHROPIC_API_KEY   required (an untouched 'your_..._here' placeholder counts as unset)
 ODDS_API_KEY        needed for live betting data (demo mode uses mock odds)
 CLAUDE_MODEL        optional — big moments; defaults to claude-sonnet-4-6
 CLAUDE_MODEL_FAST   optional — routine events; defaults to claude-haiku-4-5-20251001
 BOOTH_BUDGET_USD_PER_HOUR  optional — default 5, 0 = unlimited
 BOOTH_MAX_USD_PER_AGENT    optional — default 0.50
+BOOTH_HOST/PORT, BOOTH_AUTH_TOKEN, BOOTH_ALLOW_INSECURE, BOOTH_ALLOWED_ORIGINS   network + access control (see Security)
+BOOTH_LOG_LEVEL/FORMAT, BOOTH_HISTORY_DB/ODDS_DB/RAG_DB, BOOTH_ODDS_TTL   optional
 ```
 
-Copy `.env.example` → `.env`.
+All variables are defined, defaulted and validated in `booth/config.py` (add new ones there, not with `os.getenv` in modules). `booth/health.py`'s `runtime` and the metrics registry are process-wide state; tests reset them via an autouse fixture.
+
+Copy `.env.example` → `.env`. The container (`Dockerfile`, `docker/entrypoint.sh`, `docker-compose.yml`) keeps state under `/data`, seeds RAG on first start, and validates config before anything slow.
 
 ## Key constraints
 
-- `permission_mode="bypassPermissions"` is intentional — MCP servers only make outbound read-only API calls, never touch the filesystem.
+- Agents are locked to least privilege in `orchestrator._run_agent`: `tools=[]` (no built-in Bash/Write/WebFetch/…), `allowed_tools=["mcp__<their server>"]`, `permission_mode="dontAsk"`. Do not loosen this: agents read third-party text and a prompt injection must not reach a shell or the filesystem. (Earlier versions used `bypassPermissions` with every built-in tool enabled, which was both a security hole and ~3× the cost.) `tests/test_cost_controls.py` pins it.
 - The Analyst agent uses `max_turns=10` (vs 6 for others) because it may chain several tool calls (boxscore, recent plays, lineup split).
 - `rag/seed.py` uses `collection.get()["ids"]` (not `["metadatas"]`) to check for existing records — ChromaDB stores IDs and metadata separately.
