@@ -5,19 +5,39 @@ from pathlib import Path
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse
 
+from booth.history import history
+
 
 class ConnectionManager:
     def __init__(self) -> None:
         self._connections: list[WebSocket] = []
+        # Latest state a late joiner needs; kept current by broadcast()
+        self.last_games: list[dict] | None = None
+        self.last_status: str | None = None
+
+    def snapshot(self) -> dict:
+        """Everything a freshly connected dashboard needs, as ONE message (no ordering races)."""
+        return {"type": "snapshot", "games": self.last_games or [],
+                "status": None if self.last_games else self.last_status,
+                "history": history.recent()}
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()
+        # No await between building the snapshot and registering the socket: anything
+        # broadcast afterwards is not in the snapshot, and nothing is both.
+        snapshot = json.dumps(self.snapshot())
         self._connections.append(ws)
+        await ws.send_text(snapshot)
 
     def disconnect(self, ws: WebSocket) -> None:
-        self._connections.remove(ws)
+        if ws in self._connections:
+            self._connections.remove(ws)
 
     async def broadcast(self, payload: dict) -> None:
+        if payload.get("type") == "games":
+            self.last_games, self.last_status = payload["data"], None
+        elif payload.get("type") == "status":
+            self.last_games, self.last_status = None, payload["message"]
         data = json.dumps(payload)
         dead: list[WebSocket] = []
         for ws in list(self._connections):

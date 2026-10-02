@@ -1,4 +1,5 @@
 """Turns a detected game event into broadcast commentary."""
+from booth.history import history
 from booth.orchestrator import run_booth_commentary
 from booth.server import manager
 
@@ -19,5 +20,6 @@ async def process_event(event: dict, cli_only: bool = False) -> None:
     print(f"\n  📚 HISTORIAN:  {commentary['historian'][:200]}")
     print(f"\n  🎲 DEGENERATE: {commentary['degenerate'][:200]}")
 
+    history.add(commentary)  # before broadcasting, so a snapshot never misses a sent item
     if not cli_only:
         await manager.broadcast({"type": "commentary", "data": commentary})

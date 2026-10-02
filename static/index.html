@@ -642,11 +642,7 @@
     selectorBar.querySelectorAll('.game-pill').forEach(p =>
       p.classList.toggle('selected', p.dataset.gameId === gameId));
 
-    const type = latestType[gameId] || 'default';
-    eventTag.className = `etag ${tagClass(type)}`;
-    eventTag.textContent = tagLabel(type);
-    eventText.textContent = latestEvent[gameId] || 'Waiting for events…';
-    scoreBadge.textContent = latestScore[gameId] || '';
+    showHeader(gameId);
 
     roles.forEach(role => {
       clearChart(role);
@@ -727,11 +723,11 @@
   }
 
   // ── Add commentary card ────────────────────────────────────────────────────
-  function addCard(role, gameId, eventLabel, text) {
+  function addCard(role, gameId, eventLabel, text, render = true) {
     if (!gameHistory[gameId]) gameHistory[gameId] = { analyst: [], historian: [], degenerate: [] };
     gameHistory[gameId][role].push({ eventLabel, text });
 
-    if (gameId !== selectedGameId) return;
+    if (!render || gameId !== selectedGameId) return;
     const cards = gameHistory[gameId][role];
     setCurrentCard(role, cards[cards.length - 1].text);
     buildHistory(role, cards.slice(0, -1).reverse());
@@ -743,7 +739,8 @@
     games.forEach(g => updatePill(g.gameId, g.homeScore, g.awayScore, g.quarter, g.clock));
   }
 
-  function handleEvent(data) {
+  // Remember an event's label/score/type for its game (live events and history replay)
+  function recordEvent(data) {
     const gameId = data.game_id;
     const label  = data.event || data.type || 'Game Event';
     const score  = data.score
@@ -760,23 +757,46 @@
       const vals = Object.values(data.score);
       if (vals.length === 2) updatePill(gameId, vals[0], vals[1], data.quarter, data.time_remaining);
     }
+    return label;
+  }
 
-    if (gameId !== selectedGameId) return;
-    const type = data.type || 'default';
+  function showHeader(gameId) {
+    const type = latestType[gameId] || 'default';
     eventTag.className = `etag ${tagClass(type)}`;
     eventTag.textContent = tagLabel(type);
-    eventText.textContent = label;
-    scoreBadge.textContent = latestScore[gameId];
+    eventText.textContent = latestEvent[gameId] || 'Waiting for events…';
+    scoreBadge.textContent = latestScore[gameId] || '';
+  }
+
+  function handleEvent(data) {
+    recordEvent(data);
+    if (data.game_id !== selectedGameId) return;
+    showHeader(data.game_id);
     showThinking();
   }
 
-  function handleCommentary(data) {
+  function handleCommentary(data, render = true) {
     const gameId = data.event?.game_id;
     if (!gameId) return;
-    const label = latestEvent[gameId] || 'Game event';
-    addCard('analyst',    gameId, label, data.analyst    || '—');
-    addCard('historian',  gameId, label, data.historian  || '—');
-    addCard('degenerate', gameId, label, data.degenerate || '—');
+    // Label from the event the commentary belongs to (not whatever event arrived last)
+    const label = data.event.event || latestEvent[gameId] || 'Game event';
+    roles.forEach(role => {
+      if (data[role] != null) addCard(role, gameId, label, data[role] || '—', render);
+    });
+  }
+
+  // Sent once on (re)connect: current games + stored commentary. Authoritative, so it
+  // replaces anything held locally (a reconnect must not duplicate cards).
+  function handleSnapshot(snap) {
+    Object.keys(gameHistory).forEach(k => delete gameHistory[k]);
+    handleGames(snap.games || []);
+    (snap.history || []).forEach(item => {
+      if (!item.event || !item.event.game_id) return;
+      recordEvent(item.event);
+      handleCommentary(item, false);  // render once at the end, not per item
+    });
+    if (snap.status && !(snap.games || []).length) handleStatus(snap.status);
+    if (selectedGameId) selectGame(selectedGameId);
   }
 
   function handleStatus(msg) {
@@ -798,7 +818,8 @@
     ws.onmessage = e => {
       try {
         const msg = JSON.parse(e.data);
-        if      (msg.type === 'games')      handleGames(msg.data);
+        if      (msg.type === 'snapshot')   handleSnapshot(msg);
+        else if (msg.type === 'games')      handleGames(msg.data);
         else if (msg.type === 'event')      handleEvent(msg.data);
         else if (msg.type === 'commentary') handleCommentary(msg.data);
         else if (msg.type === 'status')     handleStatus(msg.message);
