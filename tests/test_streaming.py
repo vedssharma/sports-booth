@@ -55,6 +55,27 @@ def test_preamble_before_a_tool_call_is_reset_and_excluded_from_final_text():
     assert text == "Real take."
 
 
+def test_preamble_in_a_separate_message_from_its_tool_call_is_excluded():
+    """Real SDK shape: one AssistantMessage per content block, sharing a message_id."""
+    msgs = [
+        AssistantMessage(content=[TextBlock(text="I see the event. Let me pull the data.")], model="m", message_id="turn1"),
+        AssistantMessage(content=[ToolUseBlock(id="t1", name="get_boxscore", input={})], model="m", message_id="turn1"),
+        AssistantMessage(content=[TextBlock(text="Real take.")], model="m", message_id="turn2"),
+        result(),
+    ]
+    text, _, _ = collect(msgs)
+    assert text == "Real take."
+
+
+def test_text_split_across_messages_of_the_final_turn_is_kept_together():
+    msgs = [
+        AssistantMessage(content=[TextBlock(text="First half. ")], model="m", message_id="final"),
+        AssistantMessage(content=[TextBlock(text="Second half.")], model="m", message_id="final"),
+        result(),
+    ]
+    assert collect(msgs)[0] == "First half. Second half."
+
+
 def test_falls_back_to_all_text_when_every_turn_used_a_tool():
     text, _, _ = collect([AssistantMessage(content=[TextBlock(text="partial thoughts"),
                                                     ToolUseBlock(id="t", name="x", input={})], model="m"), result()])

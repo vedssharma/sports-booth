@@ -160,8 +160,10 @@ async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
     `on_stream(role, kind, text)` receives live "delta" chunks and "reset" notices.
     Also records tool-call, "data unavailable" and token metrics for the persona.
     """
-    final_parts: list[str] = []
-    all_parts: list[str] = []
+    # The SDK emits one AssistantMessage per content block, all sharing a message_id. Preamble text
+    # ("Let me pull the box score") and its tool_use block therefore arrive as *separate* messages,
+    # so decide per message_id, once everything has arrived, whether a turn used a tool.
+    turns: dict[str, dict] = {}          # message_id -> {"texts": [...], "tool": bool}
     cost = 0.0
     tool_names: dict[str, str] = {}      # tool_use_id -> tool name, to attribute results
     async for msg in aiter:
@@ -174,14 +176,13 @@ async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
                       and ev.get("content_block", {}).get("type") == "tool_use"):
                     on_stream(role, "reset", "")
         elif isinstance(msg, AssistantMessage):
-            texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
-            all_parts.extend(texts)
-            tool_uses = [b for b in msg.content if isinstance(b, ToolUseBlock)]
-            for b in tool_uses:
-                tool_names[b.id] = b.name
-                metrics.registry.inc("agent_tool_calls_total", persona=role, tool=b.name)
-            if not tool_uses:
-                final_parts.extend(texts)
+            turn = turns.setdefault(msg.message_id or f"anonymous-{len(turns)}", {"texts": [], "tool": False})
+            turn["texts"].extend(b.text for b in msg.content if isinstance(b, TextBlock))
+            for b in msg.content:
+                if isinstance(b, ToolUseBlock):
+                    turn["tool"] = True
+                    tool_names[b.id] = b.name
+                    metrics.registry.inc("agent_tool_calls_total", persona=role, tool=b.name)
         elif isinstance(msg, UserMessage) and isinstance(msg.content, list):
             for b in msg.content:
                 if isinstance(b, ToolResultBlock) and (
@@ -197,6 +198,8 @@ async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
                               ("cache_creation", "cache_creation_input_tokens")):
                 if usage.get(key):
                     metrics.registry.inc("agent_tokens_total", usage[key], persona=role, kind=kind)
+    final_parts = [t for turn in turns.values() if not turn["tool"] for t in turn["texts"]]
+    all_parts = [t for turn in turns.values() for t in turn["texts"]]
     return "".join(final_parts or all_parts).strip(), cost
 
 
