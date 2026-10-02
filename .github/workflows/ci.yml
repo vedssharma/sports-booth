@@ -28,3 +28,55 @@ jobs:
 
       - name: Tests
         run: uv run pytest -q
+
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build image (CPU-only PyTorch)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: sports-booth:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Refuses to listen on a network address without a token
+        run: |
+          set +e
+          out=$(docker run --rm -e ANTHROPIC_API_KEY=sk-ant-ci-dummy-0000000000 sports-booth:ci 2>&1)
+          code=$?
+          echo "$out"
+          test "$code" -eq 2
+          echo "$out" | grep -q BOOTH_AUTH_TOKEN
+
+      - name: Starts, seeds the RAG database, serves, and runs as non-root
+        run: |
+          docker run -d --name booth \
+            -e ANTHROPIC_API_KEY=sk-ant-ci-dummy-0000000000 \
+            -e BOOTH_AUTH_TOKEN=ci-token-0123456789abcdef \
+            -p 127.0.0.1:8000:8000 -v booth-ci-data:/data \
+            sports-booth:ci --demo --interval 3600
+          for i in $(seq 1 90); do
+            if curl -fsS http://127.0.0.1:8000/healthz >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:8000/healthz
+          echo
+          # the token gate works, and the detailed endpoints answer with it
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8000/health)" = "401"
+          curl -fsS -H "Authorization: Bearer ci-token-0123456789abcdef" http://127.0.0.1:8000/health | tee health.json
+          echo
+          python3 -c "import json; d = json.load(open('health.json')); assert d['mcp_transport'] == 'http', d; assert d['mode'] == 'demo', d"
+          curl -fsS -H "Authorization: Bearer ci-token-0123456789abcdef" http://127.0.0.1:8000/metrics | grep -q '^booth_process_start_time_seconds'
+          test "$(docker exec booth id -u)" = "10001"
+          docker exec booth test -s /data/history.db -o -d /data
+
+      - name: Container logs
+        if: always()
+        run: docker logs booth 2>&1 | tail -80 || true

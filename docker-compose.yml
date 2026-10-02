@@ -1,0 +1,23 @@
+# docker compose up --build
+#
+# Reads secrets from ./.env (copy .env.example and fill in ANTHROPIC_API_KEY).
+# The dashboard is published on loopback only: http://localhost:8000
+services:
+  booth:
+    build: .
+    init: true                      # reap the MCP server child processes cleanly
+    env_file: .env
+    environment:
+      BOOTH_HOST: 0.0.0.0           # listen on all interfaces *inside* the container
+      # Safe here because the port below is published on 127.0.0.1 only. Remove this line and set
+      # BOOTH_AUTH_TOKEN in .env instead if you publish it on a network interface.
+      BOOTH_ALLOW_INSECURE: "1"
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - booth-data:/data            # history, odds snapshots, RAG database, embedding model cache
+    restart: unless-stopped
+    stop_grace_period: 20s
+
+volumes:
+  booth-data:
