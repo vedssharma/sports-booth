@@ -158,3 +158,82 @@ def test_process_event_records_spend_stores_history_and_skips_when_exhausted(mon
     assert sorted(event_msg["data"]["agents"]) == ["analyst", "degenerate", "historian"]
     assert any(m["type"] == "status" and "paused" in m["message"] for m in sent)
     assert budget.state() == "exhausted"
+
+
+# ── Booth continuity (earlier commentary in the prompt) ───────────────────────
+
+def _moment(label, **takes):
+    return {"event": {"event": label, "game_id": "G1"}, **takes}
+
+
+def test_prompt_without_history_is_just_the_event():
+    p = orchestrator.build_prompt({"type": "scoring_run", "event": "BOS on a 9-0 run"})
+    assert "Earlier booth commentary" not in p and "BOS on a 9-0 run" in p
+
+
+def test_prompt_includes_recent_moments_clipped_and_without_charts():
+    long_take = "x" * 500
+    earlier = [
+        _moment("old moment", analyst="should be dropped by the 3-moment window"),
+        _moment("m1", analyst="Analyst point one. [CHART]{\"type\":\"stat_bars\"}[/CHART]", historian="h1"),
+        _moment("m2", degenerate=long_take),
+        _moment("m3", analyst="a3"),
+    ]
+    p = orchestrator.build_prompt({"event": "now"}, earlier)
+    assert "old moment" not in p and "* m1" in p and "* m3" in p
+    assert "ANALYST: Analyst point one." in p and "[CHART]" not in p
+    assert "DEGENERATE: " + "x" * 100 in p and "x" * 300 not in p and "…" in p
+    assert "context only" in p and p.index("Earlier booth commentary") < p.index("Game event:")
+
+
+def test_run_booth_commentary_passes_context_to_every_agent(monkeypatch):
+    prompts = []
+
+    async def query(prompt, options):
+        prompts.append(prompt)
+        yield AssistantMessage(content=[TextBlock(text="ok")], model="m")
+
+    monkeypatch.setattr(orchestrator, "query", query)
+    asyncio.run(orchestrator.run_booth_commentary(
+        {"event": "e"}, earlier=[_moment("prior", analyst="earlier take")]))
+    assert len(prompts) == 3 and all("earlier take" in p for p in prompts)
+
+
+def test_process_event_feeds_game_history_into_the_next_event(monkeypatch):
+    from booth.history import HistoryStore
+    store = HistoryStore(":memory:")
+    monkeypatch.setattr(pipeline, "history", store)
+    seen = []
+
+    async def query(prompt, options):
+        seen.append(prompt)
+        yield AssistantMessage(content=[TextBlock(text=f"take {len(seen)}")], model="m")
+
+    async def quiet(_):
+        pass
+    monkeypatch.setattr(orchestrator, "query", query)
+    monkeypatch.setattr(pipeline.manager, "broadcast", quiet)
+    other = {"type": "scoring_run", "game_id": "G2", "event": "other game"}
+    first = {"type": "scoring_run", "game_id": "G1", "event": "first moment"}
+    second = {"type": "scoring_run", "game_id": "G1", "event": "second moment"}
+
+    async def go():
+        await pipeline.process_event(other, cli_only=True)
+        await pipeline.process_event(first, cli_only=True)
+        n = len(seen)
+        await pipeline.process_event(second, cli_only=True)
+        return seen[n:]
+
+    second_prompts = asyncio.run(go())
+    assert all("* first moment" in p for p in second_prompts)
+    assert not any("other game" in p for p in second_prompts)   # other games never leak in
+
+
+def test_history_recent_for_game_is_ordered_and_scoped():
+    from booth.history import HistoryStore
+    store = HistoryStore(":memory:")
+    for i in range(5):
+        store.add({"event": {"game_id": "A", "event": f"a{i}"}})
+    store.add({"event": {"game_id": "B", "event": "b0"}})
+    assert [m["event"]["event"] for m in store.recent_for_game("A", 3)] == ["a2", "a3", "a4"]
+    assert store.recent_for_game("none") == []

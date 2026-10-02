@@ -84,6 +84,8 @@ NBA scoreboard (polled every N seconds)
 
 **Scheduling.** Generating commentary takes tens of seconds, so events are queued per game instead of run inline. If a game falls behind, routine updates are dropped, repeated runs are superseded by the newest one, and stale events expire. Final scores are never dropped. At most 2 games generate commentary at once.
 
+**Booth continuity.** Each agent is shown the booth's last three moments on that game (clipped, charts stripped) so the personas react to each other and don't repeat the same point.
+
 **Cost controls.** Big moments (runs, crunch time, finals) get all three personas on `CLAUDE_MODEL`. Quarter starts and joins use the cheaper `CLAUDE_MODEL_FAST`. A routine update runs just one persona, rotating per game. Real spend is tracked against `BOOTH_BUDGET_USD_PER_HOUR` (default **$5**): at 75% the booth drops routine updates and uses the cheap model everywhere; at 100% only final scores get commentary until spend rolls out of the hour window. Check `/health` for scheduler and budget state.
 
 **MCP servers** (`mcp_servers/`) are FastMCP scripts. On startup `main.py` launches each once as a long-lived local HTTP server (so the Historian's embedding model loads once, not per event) and falls back to per-run stdio subprocesses if that fails or with `--stdio-mcp`. Tools run in worker threads, NBA calls are cached for 10s, and Odds API calls are rate-limited to one per minute to protect the monthly quota. In live mode, a failed or unconfigured data source returns an explicit "unavailable" result and the agents say so rather than inventing numbers. Mock data is served only in `--demo` mode.

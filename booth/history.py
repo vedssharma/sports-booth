@@ -40,6 +40,14 @@ class HistoryStore:
                 (game_id, game_id, KEEP_PER_GAME))
             self._db.execute("DELETE FROM moments WHERE ts < ?", (now - MAX_AGE_S,))
 
+    def recent_for_game(self, game_id: str, n: int = 3) -> list[dict]:
+        """The last `n` commentary payloads for one game, oldest first."""
+        with self._lock:
+            rows = self._db.execute(
+                "SELECT payload FROM moments WHERE game_id=? ORDER BY id DESC LIMIT ?",
+                (game_id, n)).fetchall()
+        return [json.loads(r[0]) for r in reversed(rows)]
+
     def recent(self, per_game: int = 25, now: float | None = None) -> list[dict]:
         """Newest `per_game` items of each game from the last 24h, oldest first."""
         now = time.time() if now is None else now

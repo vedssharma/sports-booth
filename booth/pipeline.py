@@ -1,7 +1,7 @@
 """Turns a detected game event into broadcast commentary."""
 from booth.budget import BudgetGuard
 from booth.history import history
-from booth.orchestrator import run_booth_commentary
+from booth.orchestrator import CONTEXT_MOMENTS, run_booth_commentary
 from booth.policy import CommentaryPolicy
 from booth.server import manager
 
@@ -36,7 +36,9 @@ async def process_event(event: dict, cli_only: bool = False) -> None:
         await manager.broadcast({"type": "event", "data": {**event, "agents": list(decision.agents)}})
 
     print(f"  Fetching booth commentary: {', '.join(decision.agents)} on {decision.model} ({decision.reason})…")
-    commentary = await run_booth_commentary(event, model=decision.model, agents=decision.agents)
+    earlier = history.recent_for_game(event.get("game_id", ""), CONTEXT_MOMENTS)
+    commentary = await run_booth_commentary(event, model=decision.model, agents=decision.agents,
+                                            earlier=earlier)
     budget.record(commentary["cost_usd"])
 
     for role in decision.agents:
