@@ -283,10 +283,42 @@
 
     .empty { font-size: 0.75rem; color: #1e2433; padding: 14px; text-align: center; }
 
+    /* ── Controls (voice / persona toggles) ── */
+    .ctl {
+      background: none; border: 1px solid #1e2433; color: #64748b; border-radius: 6px;
+      font-size: 0.68rem; padding: 3px 8px; cursor: pointer; white-space: nowrap;
+    }
+    .ctl:hover { color: #cbd5e1; border-color: #334155; }
+    .ctl.on { color: #86efac; border-color: #166534; }
+    .ctl:disabled { opacity: .35; cursor: default; }
+    .agent-header .ctl { margin-left: auto; }
+    .agent-col.hidden { display: none; }
+
+    /* ── Timeline: one chip per event for the selected game ── */
+    #timeline {
+      background: #080b12; border-bottom: 1px solid #1e2433; padding: 6px 20px;
+      display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; flex-shrink: 0;
+    }
+    #timeline:empty { display: none; }
+    #timeline::-webkit-scrollbar { display: none; }
+    .tl-chip {
+      display: flex; align-items: center; gap: 6px; flex-shrink: 0; font-size: 0.66rem;
+      color: #64748b; background: #0d1117; border: 1px solid #1e2433; border-radius: 99px; padding: 2px 9px;
+    }
+    .tl-chip i { width: 6px; height: 6px; border-radius: 50%; background: #475569; }
+    .tl-chip.scoring_run i { background: #ef4444; } .tl-chip.lead_change i { background: #8b5cf6; }
+    .tl-chip.player_milestone i { background: #14b8a6; } .tl-chip.foul_trouble i { background: #eab308; }
+    .tl-chip.close_game i { background: #f59e0b; } .tl-chip.game_final i { background: #22c55e; }
+    .tl-chip.quarter_start i { background: #3b82f6; }
+
     @media (max-width: 768px) {
-      body { overflow-y: auto; height: auto; }
-      main { grid-template-columns: 1fr; }
-      .agent-col { border-right: none; border-bottom: 1px solid #1e2433; }
+      body { overflow-y: auto; height: auto; min-height: 100vh; }
+      header, #game-selector-bar, #event-banner, #timeline { padding-left: 12px; padding-right: 12px; }
+      header { flex-wrap: wrap; }
+      #event-banner { flex-wrap: wrap; }
+      #event-text { white-space: normal; flex-basis: 100%; order: 3; }
+      main { grid-template-columns: 1fr !important; overflow: visible; }
+      .agent-col { border-right: none; border-bottom: 1px solid #1e2433; overflow: visible; }
     }
   </style>
 </head>
@@ -296,6 +328,7 @@
   <div id="status-dot"></div>
   <h1>Sports <span>Booth</span></h1>
   <span id="status-label">Connecting…</span>
+  <button class="ctl" id="voice-btn" title="Read commentary aloud" hidden>🔇 Voice off</button>
 </header>
 
 <div id="game-selector-bar">
@@ -308,11 +341,14 @@
   <span id="score-badge"></span>
 </div>
 
+<div id="timeline"></div>
+
 <main>
   <div class="agent-col" id="col-analyst">
     <div class="agent-header">
       <span class="emoji">📊</span>
       <div><div class="name">The Analyst</div><div class="role">Live stats · eFG% · lineup splits</div></div>
+      <button class="ctl hide-btn" data-role="analyst" title="Hide this persona">Hide</button>
     </div>
     <div class="current-wrap" id="cw-analyst"><div class="empty">Waiting for commentary…</div></div>
     <div class="history-wrap" id="hw-analyst"></div>
@@ -322,6 +358,7 @@
     <div class="agent-header">
       <span class="emoji">📚</span>
       <div><div class="name">The Historian</div><div class="role">Historical context · records · precedents</div></div>
+      <button class="ctl hide-btn" data-role="historian" title="Hide this persona">Hide</button>
     </div>
     <div class="current-wrap" id="cw-historian"><div class="empty">Waiting for commentary…</div></div>
     <div class="history-wrap" id="hw-historian"></div>
@@ -331,6 +368,7 @@
     <div class="agent-header">
       <span class="emoji">🎲</span>
       <div><div class="name">The Degenerate</div><div class="role">Live lines · spread movement · sharp money</div></div>
+      <button class="ctl hide-btn" data-role="degenerate" title="Hide this persona">Hide</button>
     </div>
     <div class="current-wrap" id="cw-degenerate"><div class="empty">Waiting for commentary…</div></div>
     <div class="history-wrap" id="hw-degenerate"></div>
@@ -350,6 +388,9 @@
   const latestEvent = {};
   const latestScore = {};
   const latestType  = {};
+  const MAX_CARDS = 40;       // per game per persona, so a long night can't grow memory without bound
+  const MAX_TIMELINE = 60;
+  const timeline = {};      // gameId → [{ type, label, when }]
   const streaming = {};     // gameId → { role: text generated so far (live)  }
 
   const statusDot   = document.getElementById('status-dot');
@@ -368,6 +409,13 @@
   });
 
   // ── Utilities ──────────────────────────────────────────────────────────────
+  // The NBA live feed reports clocks as ISO durations ("PT05M30.00S"); show "5:30".
+  // Anything else (e.g. demo data's "5:41") passes through unchanged.
+  function fmtClock(c) {
+    const m = /^PT(\d+)M(\d+)(?:\.\d+)?S$/.exec(String(c));
+    return m ? `${parseInt(m[1], 10)}:${m[2]}` : String(c);
+  }
+
   // Commentary is LLM output (and LLMs relay tool/web text), so it is untrusted: never put it in
   // innerHTML unsanitized. If DOMPurify failed to load, fall back to escaped plain text.
   function escapeHtml(t) {
@@ -620,7 +668,7 @@
       pill.className = 'game-pill' + (g.gameId === selectedGameId ? ' selected' : '');
       pill.dataset.gameId = g.gameId;
       const score = g.quarter > 0 ? `${g.awayScore}–${g.homeScore}` : '–';
-      const qstr  = g.quarter > 0 ? `Q${g.quarter}${g.clock ? ' ' + g.clock : ''}` : g.status || '';
+      const qstr  = g.quarter > 0 ? `Q${g.quarter}${g.clock ? ' ' + fmtClock(g.clock) : ''}` : g.status || '';
       [['pt', g.label], ['pill-sep', ''], ['ps', score], ['pq', qstr]].forEach(([cls, text]) => {
         const d = document.createElement('div');
         d.className = cls;
@@ -639,7 +687,7 @@
     if (!pill) return;
     const s = pill.querySelector('.ps'), q2 = pill.querySelector('.pq');
     if (s)  s.textContent  = `${away}–${home}`;
-    if (q2) q2.textContent = q > 0 ? `Q${q}${clock ? ' ' + clock : ''}` : '';
+    if (q2) q2.textContent = q > 0 ? `Q${q}${clock ? ' ' + fmtClock(clock) : ''}` : '';
   }
 
   // ── Select game ────────────────────────────────────────────────────────────
@@ -758,7 +806,9 @@
   // ── Add commentary card ────────────────────────────────────────────────────
   function addCard(role, gameId, eventLabel, text, render = true) {
     if (!gameHistory[gameId]) gameHistory[gameId] = { analyst: [], historian: [], degenerate: [] };
-    gameHistory[gameId][role].push({ eventLabel, text });
+    const list = gameHistory[gameId][role];
+    list.push({ eventLabel, text });
+    if (list.length > MAX_CARDS) list.splice(0, list.length - MAX_CARDS);
 
     if (!render || gameId !== selectedGameId) return;
     const cards = gameHistory[gameId][role];
@@ -780,10 +830,14 @@
       ? Object.entries(data.score).map(([k,v]) => `${k} ${v}`).join(' — ')
       : '';
 
+    const tl = timeline[gameId] || (timeline[gameId] = []);
+    tl.push({ type: data.type || 'default', label,
+              when: `Q${data.quarter || '?'}${data.time_remaining ? ' ' + fmtClock(data.time_remaining) : ''}` });
+    if (tl.length > MAX_TIMELINE) tl.splice(0, tl.length - MAX_TIMELINE);
     latestEvent[gameId] = label;
     latestType[gameId]  = data.type || 'default';
     latestScore[gameId] = score
-      ? `${score}  ·  Q${data.quarter}${data.time_remaining ? ' ' + data.time_remaining : ''}`
+      ? `${score}  ·  Q${data.quarter}${data.time_remaining ? ' ' + fmtClock(data.time_remaining) : ''}`
       : '';
 
     if (data.score) {
@@ -793,7 +847,24 @@
     return label;
   }
 
+  function renderTimeline(gameId) {
+    const el = document.getElementById('timeline');
+    el.innerHTML = '';
+    (timeline[gameId] || []).forEach(t => {
+      const chip = document.createElement('div');
+      chip.className = `tl-chip ${t.type}`;
+      const dot = document.createElement('i');
+      const text = document.createElement('span');
+      text.textContent = `${t.when} · ${t.label}`;
+      chip.append(dot, text);
+      chip.title = t.label;
+      el.appendChild(chip);
+    });
+    el.scrollLeft = el.scrollWidth;
+  }
+
   function showHeader(gameId) {
+    renderTimeline(gameId);
     const type = latestType[gameId] || 'default';
     eventTag.className = `etag ${tagClass(type)}`;
     eventTag.textContent = tagLabel(type);
@@ -810,7 +881,7 @@
     showThinking(data.agents || roles);
   }
 
-  function handleCommentary(data, render = true) {
+  function handleCommentary(data, render = true, live = false) {
     const gameId = data.event?.game_id;
     if (!gameId) return;
     // Label from the event the commentary belongs to (not whatever event arrived last)
@@ -821,6 +892,7 @@
         addCard(role, gameId, label, data[role] || '—', render);
       }
     });
+    if (live && gameId === selectedGameId) speak(roles.filter(r => data[r] != null).map(r => [r, data[r]]));
   }
 
   // Sent once on (re)connect: current games + stored commentary. Authoritative, so it
@@ -828,6 +900,7 @@
   function handleSnapshot(snap) {
     Object.keys(gameHistory).forEach(k => delete gameHistory[k]);
     Object.keys(streaming).forEach(k => delete streaming[k]);
+    Object.keys(timeline).forEach(k => delete timeline[k]);
     handleGames(snap.games || []);
     (snap.history || []).forEach(item => {
       if (!item.event || !item.event.game_id) return;
@@ -850,11 +923,98 @@
   // ── WebSocket connection ───────────────────────────────────────────────────
   function setStatus(state, label) { statusDot.className = state; statusLabel.textContent = label; }
 
+  // ── Persona visibility + voice (preferences persist in localStorage) ──────
+  const pref = {
+    get(key, dflt) { try { const v = localStorage.getItem('booth.' + key); return v === null ? dflt : JSON.parse(v); } catch { return dflt; } },
+    set(key, val)  { try { localStorage.setItem('booth.' + key, JSON.stringify(val)); } catch {} },
+  };
+  const hiddenRoles = new Set(pref.get('hidden', []));
+
+  function applyHidden() {
+    const visible = roles.filter(r => !hiddenRoles.has(r));
+    roles.forEach(r => {
+      document.getElementById(`col-${r}`).classList.toggle('hidden', hiddenRoles.has(r));
+    });
+    document.querySelector('main').style.gridTemplateColumns = `repeat(${Math.max(visible.length, 1)}, 1fr)`;
+    document.querySelectorAll('.hide-btn').forEach(btn => {
+      btn.textContent = 'Hide';
+      btn.disabled = visible.length === 1;          // always keep one persona on screen
+    });
+  }
+  document.querySelectorAll('.hide-btn').forEach(btn => btn.addEventListener('click', () => {
+    hiddenRoles.add(btn.dataset.role);
+    pref.set('hidden', [...hiddenRoles]);
+    applyHidden();
+    renderShowButtons();
+  }));
+
+  // Hidden personas get a "Show" chip in the header so they can be brought back
+  function renderShowButtons() {
+    document.querySelectorAll('.show-btn').forEach(el => el.remove());
+    const anchor = document.getElementById('voice-btn');
+    [...hiddenRoles].forEach(r => {
+      const b = document.createElement('button');
+      b.className = 'ctl show-btn';
+      b.textContent = `Show ${r}`;
+      b.addEventListener('click', () => { hiddenRoles.delete(r); pref.set('hidden', [...hiddenRoles]); applyHidden(); renderShowButtons(); });
+      anchor.before(b);
+    });
+  }
+
+  // Voice: browser speech synthesis, a distinct voice/pitch/rate per persona. No backend needed.
+  const voiceBtn = document.getElementById('voice-btn');
+  const VOICE_STYLE = { analyst: { pitch: 0.9, rate: 1.05 }, historian: { pitch: 1.15, rate: 0.95 }, degenerate: { pitch: 0.75, rate: 1.15 } };
+  let voiceOn = pref.get('voice', false);
+
+  function pickVoice(role) {
+    const en = speechSynthesis.getVoices().filter(v => v.lang && v.lang.startsWith('en'));
+    return en.length ? en[roles.indexOf(role) % en.length] : null;
+  }
+
+  function speak(items) {
+    if (!voiceOn || !window.speechSynthesis) return;
+    speechSynthesis.cancel();                       // newest commentary wins over a backlog
+    items.filter(([r]) => !hiddenRoles.has(r)).forEach(([role, text]) => {
+      const { cleanText } = parseChartData(text);
+      const plain = toPlain(cleanText);
+      if (!plain) return;
+      const u = new SpeechSynthesisUtterance(plain);
+      const voice = pickVoice(role);
+      if (voice) u.voice = voice;
+      Object.assign(u, VOICE_STYLE[role] || {});
+      speechSynthesis.speak(u);
+    });
+  }
+
+  function renderVoiceBtn() {
+    voiceBtn.textContent = voiceOn ? '🔊 Voice on' : '🔇 Voice off';
+    voiceBtn.classList.toggle('on', voiceOn);
+  }
+  if ('speechSynthesis' in window) {
+    voiceBtn.hidden = false;
+    renderVoiceBtn();
+    voiceBtn.addEventListener('click', () => {
+      voiceOn = !voiceOn;
+      pref.set('voice', voiceOn);
+      if (!voiceOn) speechSynthesis.cancel();
+      renderVoiceBtn();
+    });
+  }
+  applyHidden();
+  renderShowButtons();
+
+  let reconnectAttempts = 0;
+
   function connect() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
-    ws.onopen  = () => setStatus('connected', 'Live');
-    ws.onclose = () => { setStatus('error', 'Disconnected — retrying…'); setTimeout(connect, 3000); };
+    ws.onopen  = () => { reconnectAttempts = 0; setStatus('connected', 'Live'); };
+    ws.onclose = () => {
+      // 1s, 2s, 4s … capped at 30s, with jitter so a server restart doesn't get a thundering herd
+      const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts++) * (0.8 + Math.random() * 0.4);
+      setStatus('error', `Disconnected — retrying in ${Math.round(delay / 1000)}s…`);
+      setTimeout(connect, delay);
+    };
     ws.onerror = () => setStatus('error', 'Connection error');
     ws.onmessage = e => {
       try {
@@ -863,9 +1023,9 @@
         else if (msg.type === 'delta')      handleDelta(msg);
         else if (msg.type === 'games')      handleGames(msg.data);
         else if (msg.type === 'event')      handleEvent(msg.data);
-        else if (msg.type === 'commentary') handleCommentary(msg.data);
+        else if (msg.type === 'commentary') handleCommentary(msg.data, true, true);
         else if (msg.type === 'status')     handleStatus(msg.message);
-      } catch {}
+      } catch (err) { console.warn('Bad message', err); }
     };
   }
 

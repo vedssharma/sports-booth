@@ -47,7 +47,7 @@ uv run python main.py --interval 30
 uv run python main.py --stdio-mcp
 ```
 
-Open `http://localhost:8000` in your browser. If multiple games are live, use the pill selector at the top to switch between them — commentary history is stored in `data/history.db`, so it survives restarts and is replayed to anyone who opens or reloads the dashboard mid-game.
+Open `http://localhost:8000` in your browser. The dashboard has an event timeline for the selected game, a **Hide** button per persona, an optional **Voice** toggle (browser speech synthesis, a distinct voice per persona; off by default) and a stacked layout on phones. Voice and hidden-persona choices are remembered in `localStorage`. If multiple games are live, use the pill selector at the top to switch between them — commentary history is stored in `data/history.db`, so it survives restarts and is replayed to anyone who opens or reloads the dashboard mid-game.
 
 ## How it works
 

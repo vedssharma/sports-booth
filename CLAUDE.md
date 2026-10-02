@@ -66,7 +66,7 @@ main.py                    args; starts MCP servers (booth/mcp_host.py) then web
 - `commentary` — text per persona that ran (absent personas are omitted, not empty); includes `event`, `model`, `cost_usd`
 - `status` — informational string (e.g. "no live games", budget notices)
 
-**Dashboard** (`static/index.html`): pure vanilla JS, no build step. Stores commentary cards in memory keyed by `gameId`, so switching games is instant; history survives reloads via the `snapshot` message. Auto-selects the first game on arrival.
+**Dashboard** (`static/index.html`): pure vanilla JS, no build step. Stores commentary cards in memory keyed by `gameId`, so switching games is instant; history survives reloads via the `snapshot` message. Per-game memory is capped (`MAX_CARDS`/`MAX_TIMELINE`), the WebSocket reconnects with exponential backoff + jitter, and persona visibility/voice live in `localStorage` (`pref`). Voice speaks only *live* commentary for the selected game, never history replay. NBA clocks arrive as ISO durations (`PT05M30.00S`); use `fmtClock` for display. Auto-selects the first game on arrival.
 
 **RAG database** lives at `rag/chroma_db/` (gitignored). Re-seed any time with `uv run python rag/seed.py` (idempotent; `--rebuild` drops first, `--fetch-leaders` adds nba_api all-time leaderboards). Facts come from `rag/seed.py`'s curated list plus `rag/data/*.jsonl`, validated by `rag/facts.py` before anything is written. The RAG server's tools resolve player/team wording to stored metadata (`rag/filters.py`) and pass Chroma `where` filters; unmatched filters are dropped with a note. Tests use an in-process Chroma with a fake hashing embedder (no model download).
 
