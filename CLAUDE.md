@@ -50,6 +50,8 @@ main.py                    args; starts MCP servers (booth/mcp_host.py) then web
 
 **MCP servers** are FastMCP scripts. `McpHost` starts each once as a local streamable-HTTP server and the orchestrator points agents at them (`use_http_servers`); if startup fails (or `--stdio-mcp`), `_mcp_config` falls back to a fresh stdio subprocess per run. Tools are registered with `@offload(mcp)` (runs the sync function in a thread; returns it unchanged so tests can call it directly). In live mode a failed or unconfigured data source returns an explicit "unavailable" result (never fabricated data); mock data is served only in `--demo` mode via `BOOTH_MOCK_DATA=1`. Servers import `booth.*`, so import `_common` first (it adds the repo root to `sys.path`).
 
+**Streaming.** `run_booth_commentary(on_stream=...)` turns on the SDK's `include_partial_messages`; `_collect` forwards text deltas and a `reset` when a `tool_use` block starts. Final commentary text is only from tool-free assistant turns (preamble like "let me check the box score" is excluded), falling back to all text if every turn used a tool.
+
 **Booth continuity.** `process_event` loads the game's last 3 stored moments (`history.recent_for_game`) and `orchestrator.build_prompt` shows them to every agent (chart blocks stripped, lines clipped, labelled context-only) so personas build on or push back against each other instead of repeating points. Per-game events run serially in the scheduler, so earlier commentary is always stored before the next event starts.
 
 **Cost controls.** `CommentaryPolicy` maps event type → (model, personas): big moments = all personas on `CLAUDE_MODEL`; quarter starts/joins = all on `CLAUDE_MODEL_FAST`; routine `game_update` = one rotating persona on the fast model. `BudgetGuard` sums `ResultMessage.total_cost_usd` over a rolling hour vs `BOOTH_BUDGET_USD_PER_HOUR` (default 5): ≥75% "saver", ≥100% "exhausted" (finals only). Unknown event types (e.g. demo milestones) count as big. Demo mode bypasses the scheduler and plays events in order.
@@ -57,9 +59,10 @@ main.py                    args; starts MCP servers (booth/mcp_host.py) then web
 **Live event detection** (`booth/events.py: EventDetector`): stateful, compares scoreboard snapshots and emits events for quarter changes, scoring runs (≥7-point net swing within a rolling 3-minute window), lead changes (real flips only, after the opening minutes, rate-limited; `comeback` when the new leader had trailed by ≥10), crunch time (Q4/OT within 5, rate-limited), final scores (once per game), and a routine update only after a quiet stretch. A newly seen live game fires one join event. `booth/players.py: PlayerWatcher` adds player milestones (20/30/40/50/60 pts, 5+ threes, double/triple-double) and foul trouble from one live box score per game per poll; the first box score is a silent baseline and output is capped per poll. Run `uv run pytest` for the unit tests.
 
 **WebSocket protocol** — message types the server sends:
-- `snapshot` — sent once on connect: `{games, status, history}`. Authoritative; the client replaces local state with it (so reconnects don't duplicate cards)
+- `snapshot` — sent once on connect: `{games, status, history, streaming}` (`streaming` = text of takes being written right now). Authoritative; the client replaces local state with it (so reconnects don't duplicate cards)
 - `games` — list of live game summaries; triggers selector re-render
 - `event` — a detected game moment; `agents` lists which personas will respond (only those show "thinking")
+- `delta` — live text from one persona: `{game_id, role, text, reset}`; coalesced to ~120ms batches by `booth/streaming.py: StreamRelay`; `reset` means the agent started a tool call and its earlier text was preamble. The finished `commentary` replaces it
 - `commentary` — text per persona that ran (absent personas are omitted, not empty); includes `event`, `model`, `cost_usd`
 - `status` — informational string (e.g. "no live games", budget notices)
 

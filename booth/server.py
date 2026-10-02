@@ -14,12 +14,14 @@ class ConnectionManager:
         # Latest state a late joiner needs; kept current by broadcast()
         self.last_games: list[dict] | None = None
         self.last_status: str | None = None
+        # Text of commentary currently being generated: {game_id: {role: text so far}}
+        self.streaming: dict[str, dict[str, str]] = {}
 
     def snapshot(self) -> dict:
         """Everything a freshly connected dashboard needs, as ONE message (no ordering races)."""
         return {"type": "snapshot", "games": self.last_games or [],
                 "status": None if self.last_games else self.last_status,
-                "history": history.recent()}
+                "history": history.recent(), "streaming": self.streaming}
 
     async def connect(self, ws: WebSocket) -> None:
         await ws.accept()

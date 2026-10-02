@@ -3,6 +3,7 @@ from booth.budget import BudgetGuard
 from booth.history import history
 from booth.orchestrator import CONTEXT_MOMENTS, run_booth_commentary
 from booth.policy import CommentaryPolicy
+from booth.streaming import StreamRelay
 from booth.server import manager
 
 
@@ -37,8 +38,13 @@ async def process_event(event: dict, cli_only: bool = False) -> None:
 
     print(f"  Fetching booth commentary: {', '.join(decision.agents)} on {decision.model} ({decision.reason})…")
     earlier = history.recent_for_game(event.get("game_id", ""), CONTEXT_MOMENTS)
-    commentary = await run_booth_commentary(event, model=decision.model, agents=decision.agents,
-                                            earlier=earlier)
+    relay = None if cli_only else StreamRelay(manager, event.get("game_id", ""))
+    try:
+        commentary = await run_booth_commentary(event, model=decision.model, agents=decision.agents,
+                                                earlier=earlier, on_stream=relay)
+    finally:
+        if relay:
+            await relay.close()
     budget.record(commentary["cost_usd"])
 
     for role in decision.agents:

@@ -101,6 +101,8 @@
     .etag.scoring_run   { background: #7f1d1d; color: #fca5a5; }
     .etag.quarter_start { background: #1e3a5f; color: #93c5fd; }
     .etag.close_game    { background: #78350f; color: #fcd34d; }
+    .ct.cursor > :last-child::after { content: '▍'; margin-left: 2px; opacity: .7; animation: blink 1s steps(2) infinite; }
+    @keyframes blink { 50% { opacity: 0; } }
     .etag.lead_change   { background: #4c1d95; color: #c4b5fd; }
     .etag.player_milestone { background: #134e4a; color: #5eead4; }
     .etag.foul_trouble  { background: #713f12; color: #fde68a; }
@@ -348,6 +350,7 @@
   const latestEvent = {};
   const latestScore = {};
   const latestType  = {};
+  const streaming = {};     // gameId → { role: text generated so far (live)  }
 
   const statusDot   = document.getElementById('status-dot');
   const statusLabel = document.getElementById('status-label');
@@ -657,6 +660,7 @@
         setCurrentCard(role, cards[cards.length - 1].text);
         buildHistory(role, cards.slice(0, -1).reverse());
       }
+      if ((streaming[gameId] || {})[role]) renderStreaming(role);   // a take is being written right now
     });
   }
 
@@ -711,6 +715,32 @@
       item.addEventListener('click', () => item.classList.toggle('open'));
       wrap.appendChild(item);
     });
+  }
+
+  // ── Live streaming ─────────────────────────────────────────────────────────
+  // Text arrives while the agent is still writing. Hide any [CHART] block (it's rendered from
+  // the final text) and show a cursor so it reads as "being typed".
+  function renderStreaming(role) {
+    const text = (streaming[selectedGameId] || {})[role] || '';
+    const visible = text.split('[CHART]')[0].trim();
+    if (!visible) return;                 // nothing yet: keep the "Analyzing…" indicator
+    clearChart(role);
+    cw[role].innerHTML = '';
+    const card = document.createElement('div');
+    card.className = 'current-card';
+    const textDiv = document.createElement('div');
+    textDiv.className = 'ct cursor';
+    textDiv.innerHTML = renderMarkdown(visible);
+    card.appendChild(textDiv);
+    cw[role].appendChild(card);
+  }
+
+  function handleDelta(msg) {
+    const g = streaming[msg.game_id] || (streaming[msg.game_id] = {});
+    g[msg.role] = (msg.reset ? '' : (g[msg.role] || '')) + (msg.text || '');
+    if (msg.game_id !== selectedGameId) return;
+    if (msg.reset && !g[msg.role]) showThinking([msg.role]);
+    else renderStreaming(msg.role);
   }
 
   // ── Thinking indicator ─────────────────────────────────────────────────────
@@ -773,6 +803,8 @@
 
   function handleEvent(data) {
     recordEvent(data);
+    const active = data.agents || roles;
+    active.forEach(r => { (streaming[data.game_id] || (streaming[data.game_id] = {}))[r] = ''; });
     if (data.game_id !== selectedGameId) return;
     showHeader(data.game_id);
     showThinking(data.agents || roles);
@@ -784,7 +816,10 @@
     // Label from the event the commentary belongs to (not whatever event arrived last)
     const label = data.event.event || latestEvent[gameId] || 'Game event';
     roles.forEach(role => {
-      if (data[role] != null) addCard(role, gameId, label, data[role] || '—', render);
+      if (data[role] != null) {
+        if (streaming[gameId]) delete streaming[gameId][role];   // finished text replaces the live text
+        addCard(role, gameId, label, data[role] || '—', render);
+      }
     });
   }
 
@@ -792,12 +827,15 @@
   // replaces anything held locally (a reconnect must not duplicate cards).
   function handleSnapshot(snap) {
     Object.keys(gameHistory).forEach(k => delete gameHistory[k]);
+    Object.keys(streaming).forEach(k => delete streaming[k]);
     handleGames(snap.games || []);
     (snap.history || []).forEach(item => {
       if (!item.event || !item.event.game_id) return;
       recordEvent(item.event);
       handleCommentary(item, false);  // render once at the end, not per item
     });
+    // Restore in-progress text AFTER replaying history (replay clears live text per finished card)
+    Object.entries(snap.streaming || {}).forEach(([g, byRole]) => { streaming[g] = { ...byRole }; });
     if (snap.status && !(snap.games || []).length) handleStatus(snap.status);
     if (selectedGameId) selectGame(selectedGameId);
   }
@@ -822,6 +860,7 @@
       try {
         const msg = JSON.parse(e.data);
         if      (msg.type === 'snapshot')   handleSnapshot(msg);
+        else if (msg.type === 'delta')      handleDelta(msg);
         else if (msg.type === 'games')      handleGames(msg.data);
         else if (msg.type === 'event')      handleEvent(msg.data);
         else if (msg.type === 'commentary') handleCommentary(msg.data);

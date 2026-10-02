@@ -84,6 +84,8 @@ NBA scoreboard (polled every N seconds)
 
 **Scheduling.** Generating commentary takes tens of seconds, so events are queued per game instead of run inline. If a game falls behind, routine updates are dropped, repeated runs are superseded by the newest one, and stale events expire. Final scores are never dropped. At most 2 games generate commentary at once.
 
+**Streaming.** Commentary appears word by word while each persona is still writing. Text typed before a tool call ("let me check the box score…") is discarded, in the stream and in the final card. A dashboard that connects mid-sentence gets the text so far.
+
 **Booth continuity.** Each agent is shown the booth's last three moments on that game (clipped, charts stripped) so the personas react to each other and don't repeat the same point.
 
 **Cost controls.** Big moments (runs, crunch time, finals) get all three personas on `CLAUDE_MODEL`. Quarter starts and joins use the cheaper `CLAUDE_MODEL_FAST`. A routine update runs just one persona, rotating per game. Real spend is tracked against `BOOTH_BUDGET_USD_PER_HOUR` (default **$5**): at 75% the booth drops routine updates and uses the cheap model everywhere; at 100% only final scores get commentary until spend rolls out of the hour window. Check `/health` for scheduler and budget state.
