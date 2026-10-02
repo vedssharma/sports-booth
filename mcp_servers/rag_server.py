@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Historical NBA RAG MCP server — ChromaDB + sentence-transformers for semantic search."""
 import json
+import logging
 import os
-import sys
 import threading
 
 from mcp.server.fastmcp import FastMCP
@@ -188,7 +188,7 @@ def _warmup() -> None:
     try:
         _get_store()
     except Exception as e:  # tools will report the same error to the agent
-        print(f"RAG warmup failed: {e}", file=sys.stderr)
+        logging.getLogger("booth.rag").warning("RAG warmup failed: %s", e)
 
 
 if __name__ == "__main__":

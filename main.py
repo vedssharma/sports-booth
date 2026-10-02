@@ -11,6 +11,7 @@ CLI usage:
 import argparse
 import asyncio
 import os
+import signal
 import sys
 from functools import partial
 
@@ -95,18 +96,46 @@ async def _serve(interval: int, cli_only: bool, demo: bool, host: str, port: int
             await live_loop(interval, cli_only, scheduler)
 
     if cli_only:
-        await loop_fn()
+        task = asyncio.ensure_future(loop_fn())
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            asyncio.get_running_loop().add_signal_handler(sig, task.cancel)
+        try:
+            await task
+        except asyncio.CancelledError:
+            logger.info("interrupted")
         return
 
     server_config = uvicorn.Config(app, host=host, port=port, log_level="warning")
     server = uvicorn.Server(server_config)
 
-    async def _start_loop() -> None:
+    async def start_loop() -> None:
         await asyncio.sleep(1)  # let server bind
         logger.info("dashboard ready", extra={"url": f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}"})
         await loop_fn()
 
-    await asyncio.gather(server.serve(), _start_loop())
+    await serve_until_stopped(server.serve(), start_loop())
+
+
+async def serve_until_stopped(serve, background) -> None:
+    """Run the web server and the background loop; return when the *server* stops.
+
+    uvicorn handles SIGTERM/SIGINT by finishing `serve()`. The previous
+    `gather(serve(), loop())` then kept waiting for the polling loop (sleeping 45s, or the demo's
+    long interval), so `docker stop` ran into its kill timeout and exited 137. Now the loop is
+    cancelled the moment the server stops, and a crash in the loop is logged rather than silent.
+    The loop *finishing* on its own (the demo ending) must not stop the server."""
+    task = asyncio.ensure_future(background)
+
+    def _report(t: asyncio.Task) -> None:
+        if not t.cancelled() and t.exception():
+            logger.error("background loop crashed", exc_info=t.exception())
+
+    task.add_done_callback(_report)
+    try:
+        await serve
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 def main() -> None:
