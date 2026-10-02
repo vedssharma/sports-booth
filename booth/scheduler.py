@@ -15,9 +15,10 @@ from collections import deque
 from typing import Awaitable, Callable
 
 # Higher = more important. Priority-3 events are never dropped or expired.
-PRIORITY = {"game_final": 3, "quarter_start": 2, "scoring_run": 2, "close_game": 2, "game_update": 1}
+PRIORITY = {"game_final": 3, "quarter_start": 2, "scoring_run": 2, "close_game": 2,
+            "lead_change": 2, "player_milestone": 2, "foul_trouble": 1, "game_update": 1}
 # A fresher event of the same type makes an older pending one redundant
-SUPERSEDABLE = {"scoring_run", "close_game", "game_update"}
+SUPERSEDABLE = {"scoring_run", "close_game", "game_update", "lead_change"}
 
 MAX_CONCURRENT = 2
 MAX_PENDING_PER_GAME = 2

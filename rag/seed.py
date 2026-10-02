@@ -2,11 +2,18 @@
 Seed the ChromaDB historical NBA database.
 Run once before starting the booth:
 
-    uv run python rag/seed.py
+    uv run python rag/seed.py                  # curated facts + rag/data/*.jsonl
+    uv run python rag/seed.py --fetch-leaders  # also all-time leaderboards from nba_api
+    uv run python rag/seed.py --rebuild        # drop and re-create the collection
 """
+import sys
 from pathlib import Path
+
 import chromadb
 from sentence_transformers import SentenceTransformer
+
+sys.path.insert(0, str(Path(__file__).parent.parent))  # `uv run python rag/seed.py` has rag/ on the path, not the repo root
+from rag.facts import fetch_all_time_leaders, load_data_dir, merge_facts, validate_fact  # noqa: E402
 
 DB_PATH = str(Path(__file__).parent / "chroma_db")
 COLLECTION_NAME = "nba_history"
@@ -201,36 +208,60 @@ HISTORICAL_FACTS = [
 ]
 
 
-def seed() -> None:
+def collect_facts(fetch_leaders: bool = False) -> list[dict]:
+    """Curated facts + rag/data/*.jsonl (+ nba_api all-time leaders). Validated; bad data aborts
+    before the database is touched."""
+    curated = [validate_fact(f, "seed.py") for f in HISTORICAL_FACTS]
+    groups = [curated, load_data_dir()]
+    if fetch_leaders:
+        print("Fetching all-time leaderboards from nba_api…")
+        groups.append(fetch_all_time_leaders())
+    return merge_facts(*groups)
+
+
+def seed(rebuild: bool = False, fetch_leaders: bool = False) -> None:
+    facts = collect_facts(fetch_leaders)
+    print(f"{len(facts)} facts ready ({len(HISTORICAL_FACTS)} curated).")
+
     print(f"Loading embedding model '{EMBED_MODEL}'…")
     embedder = SentenceTransformer(EMBED_MODEL)
 
     print("Connecting to ChromaDB…")
     client = chromadb.PersistentClient(path=DB_PATH)
+    if rebuild:
+        try:
+            client.delete_collection(COLLECTION_NAME)
+            print("Dropped existing collection (--rebuild).")
+        except Exception:
+            pass
     collection = client.get_or_create_collection(COLLECTION_NAME)
 
     existing = set(collection.get()["ids"] or [])
-    to_add = [f for f in HISTORICAL_FACTS if f["id"] not in existing]
+    to_add = [f for f in facts if f["id"] not in existing]
 
     if not to_add:
         print(f"Database already contains {collection.count()} facts. Nothing to add.")
         return
 
     print(f"Embedding {len(to_add)} historical facts…")
-    texts = [f["text"] for f in to_add]
-    embeddings = embedder.encode(texts, show_progress_bar=True).tolist()
-
-    collection.add(
-        ids=[f["id"] for f in to_add],
-        embeddings=embeddings,
-        documents=texts,
-        metadatas=[
-            {k: v for k, v in f.items() if k not in ("id", "text")}
-            for f in to_add
-        ],
-    )
+    for start in range(0, len(to_add), 256):   # batches keep memory flat for large imports
+        batch = to_add[start:start + 256]
+        texts = [f["text"] for f in batch]
+        collection.add(
+            ids=[f["id"] for f in batch],
+            embeddings=embedder.encode(texts, show_progress_bar=False).tolist(),
+            documents=texts,
+            metadatas=[{k: v for k, v in f.items() if k not in ("id", "text")} for f in batch],
+        )
     print(f"✓ Seeded {len(to_add)} facts. Total in DB: {collection.count()}")
 
 
 if __name__ == "__main__":
-    seed()
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Seed the historical NBA facts database")
+    parser.add_argument("--rebuild", action="store_true", help="drop and recreate the collection")
+    parser.add_argument("--fetch-leaders", action="store_true",
+                        help="also import all-time career leaderboards from nba_api (needs network)")
+    args = parser.parse_args()
+    seed(rebuild=args.rebuild, fetch_leaders=args.fetch_leaders)

@@ -4,7 +4,10 @@ Live event detection: turns successive NBA scoreboard snapshots into discrete "m
 Stateful (EventDetector) so it can:
   - detect scoring runs over a rolling window rather than a single poll interval,
   - rate-limit repeats (crunch time, routine updates) with per-game cooldowns,
+  - announce lead changes (and comebacks) without flooding when a game is a seesaw,
   - announce a game's final score exactly once.
+
+Player-level moments (milestones, foul trouble) need box scores; see booth/players.py.
 """
 import time
 from collections import deque
@@ -17,6 +20,11 @@ RUN_WINDOW_S = 180
 CLOSE_GAME_COOLDOWN_S = 120
 # Emit a routine "live update" only if nothing else was emitted for this long
 UPDATE_INTERVAL_S = 150
+# Lead changes: ignore the opening minutes (meaningless flips), and rate-limit repeats
+LEAD_CHANGE_MIN_TOTAL_POINTS = 40
+LEAD_CHANGE_COOLDOWN_S = 120
+# Taking the lead after trailing by at least this many points is called out as a comeback
+COMEBACK_DEFICIT = 10
 
 
 def game_label(game: dict) -> str:
@@ -44,6 +52,9 @@ class _GameState:
     period: int = 0
     last_event_at: float = 0.0
     last_close_at: float = float("-inf")
+    last_lead_change_at: float = float("-inf")
+    leader: int = 0                                 # last non-tied leader: +1 home, -1 away
+    max_deficit: dict = field(default_factory=lambda: {1: 0, -1: 0})  # biggest hole each side has been in
 
 
 class EventDetector:
@@ -100,12 +111,26 @@ class EventDetector:
         if st is None:
             st = self._state[gid] = _GameState(period=period)
             st.history.append((now, hs, as_))
+            st.leader = (hs > as_) - (hs < as_)
+            st.max_deficit[1], st.max_deficit[-1] = max(0, as_ - hs), max(0, hs - as_)
             return make("game_update", f"{label} is live — {status}",
                         f"Joining the broadcast in Q{period}. Score: {ac} {as_} — {hc} {hs}",
                         join=True)
 
         prev_ts, prev_hs, prev_as = st.history[-1]
         scored = (hs - prev_hs) + (as_ - prev_as) > 0
+
+        # Track who leads and how deep each side's worst hole has been (for lead changes/comebacks)
+        st.max_deficit[1] = max(st.max_deficit[1], as_ - hs)
+        st.max_deficit[-1] = max(st.max_deficit[-1], hs - as_)
+        lead_now = (hs > as_) - (hs < as_)
+        flipped_to = 0
+        if lead_now and st.leader and lead_now != st.leader:
+            flipped_to = lead_now
+        hole = st.max_deficit[flipped_to] if flipped_to else 0   # hole the new leader just climbed out of
+        if lead_now:
+            st.leader = lead_now
+            st.max_deficit[lead_now] = 0   # leading again: an old hole no longer counts
 
         # ── Period change ─────────────────────────────────────────────────────
         if period > st.period:
@@ -133,6 +158,18 @@ class EventDetector:
             return make("scoring_run", f"{run_team} on a {run_pts}-{opp_pts} run",
                         f"{run_team} {'leads' if lead > 0 else 'trails'} by {abs(lead)}. "
                         f"Current score: {ac} {as_} — {hc} {hs}")
+
+        # ── Lead change (a real flip of the lead; ties in between don't count) ─
+        if (flipped_to and hs + as_ >= LEAD_CHANGE_MIN_TOTAL_POINTS
+                and now - st.last_lead_change_at >= LEAD_CHANGE_COOLDOWN_S):
+            st.last_lead_change_at = now
+            new_leader, old_leader = (hc, ac) if flipped_to == 1 else (ac, hc)
+            if hole >= COMEBACK_DEFICIT:
+                return make("lead_change", f"{new_leader} completes a comeback from {hole} down",
+                            f"{new_leader} now leads {old_leader} by {abs(hs - as_)}. "
+                            f"Score: {ac} {as_} — {hc} {hs}", comeback=True, deficit_overcome=hole)
+            return make("lead_change", f"{new_leader} takes the lead",
+                        f"{new_leader} up {abs(hs - as_)} over {old_leader}. Score: {ac} {as_} — {hc} {hs}")
 
         # ── Crunch time (Q4/OT, within 5), rate limited ───────────────────────
         margin = abs(hs - as_)

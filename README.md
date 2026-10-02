@@ -47,7 +47,7 @@ uv run python main.py --interval 30
 uv run python main.py --stdio-mcp
 ```
 
-Open `http://localhost:8000` in your browser. If multiple games are live, use the pill selector at the top to switch between them — commentary history is stored in `data/history.db`, so it survives restarts and is replayed to anyone who opens or reloads the dashboard mid-game.
+Open `http://localhost:8000` in your browser. The dashboard has an event timeline for the selected game, a **Hide** button per persona, an optional **Voice** toggle (browser speech synthesis, a distinct voice per persona; off by default) and a stacked layout on phones. Voice and hidden-persona choices are remembered in `localStorage`. If multiple games are live, use the pill selector at the top to switch between them — commentary history is stored in `data/history.db`, so it survives restarts and is replayed to anyone who opens or reloads the dashboard mid-game.
 
 ## How it works
 
@@ -76,24 +76,43 @@ NBA scoreboard (polled every N seconds)
 - A new live game appearing for the first time
 - A quarter or overtime period starting
 - One team outscoring the other by 7+ points within a rolling 3 minutes (scoring run)
+- The lead changing hands (called out as a comeback when the new leader trailed by 10+)
+- A player milestone (20/30/40/50/60 points, 5+ threes, double- or triple-double) or foul trouble, from live box scores
 - A game within 5 points in Q4 or OT (crunch time, rate-limited)
 - A game ending (final score, exactly once)
 - A routine update, only after a quiet stretch
 
 **Scheduling.** Generating commentary takes tens of seconds, so events are queued per game instead of run inline. If a game falls behind, routine updates are dropped, repeated runs are superseded by the newest one, and stale events expire. Final scores are never dropped. At most 2 games generate commentary at once.
 
+**Streaming.** Commentary appears word by word while each persona is still writing. Text typed before a tool call ("let me check the box score…") is discarded, in the stream and in the final card. A dashboard that connects mid-sentence gets the text so far.
+
+**Booth continuity.** Each agent is shown the booth's last three moments on that game (clipped, charts stripped) so the personas react to each other and don't repeat the same point.
+
 **Cost controls.** Big moments (runs, crunch time, finals) get all three personas on `CLAUDE_MODEL`. Quarter starts and joins use the cheaper `CLAUDE_MODEL_FAST`. A routine update runs just one persona, rotating per game. Real spend is tracked against `BOOTH_BUDGET_USD_PER_HOUR` (default **$5**): at 75% the booth drops routine updates and uses the cheap model everywhere; at 100% only final scores get commentary until spend rolls out of the hour window. Check `/health` for scheduler and budget state.
 
 **MCP servers** (`mcp_servers/`) are FastMCP scripts. On startup `main.py` launches each once as a long-lived local HTTP server (so the Historian's embedding model loads once, not per event) and falls back to per-run stdio subprocesses if that fails or with `--stdio-mcp`. Tools run in worker threads, NBA calls are cached for 10s, and Odds API calls are rate-limited to one per minute to protect the monthly quota. In live mode, a failed or unconfigured data source returns an explicit "unavailable" result and the agents say so rather than inventing numbers. Mock data is served only in `--demo` mode.
 
-**RAG database** (`rag/chroma_db/`) is seeded with 18 historical NBA facts using `sentence-transformers` embeddings. The Historian agent queries it semantically — pass a game event description and it returns the most contextually relevant historical precedents.
+**RAG database** (`rag/chroma_db/`) holds historical NBA facts embedded with `sentence-transformers`. The Historian searches it semantically and can narrow results with exact metadata filters (player, team, category, year range) — names are resolved forgivingly ("LeBron", "LAL", "Lakers"), and a filter that matches nothing is dropped with a note rather than returning an empty answer. Grow it three ways:
+
+```bash
+uv run python rag/seed.py                  # curated facts + any rag/data/*.jsonl
+uv run python rag/seed.py --fetch-leaders  # also all-time career leaderboards from nba_api (needs network)
+uv run python rag/seed.py --rebuild        # drop and re-create the collection
+```
+
+Drop your own facts in `rag/data/*.jsonl`, one JSON object per line (`#` comment lines allowed). `id` and `text` are required and ids must be unique; everything else is metadata (`player`, `team`, `year` as an integer, `category`, …). The whole import is validated before the database is touched, with errors reported as `file:line`:
+
+```json
+{"id": "example_001", "text": "Jane Doe scored 50 points in a playoff game for the Example Hawks in 1999.", "player": "Jane Doe", "team": "Example Hawks", "year": 1999, "category": "playoff_performance"}
+```
+
 
 ## Project structure
 
 ```
 main.py                   Entry point — args, MCP host + server startup
 booth/
-  events.py               EventDetector — snapshots → game events
+  events.py, players.py   EventDetector (scoreboard moments) and PlayerWatcher (box-score moments)
   scheduler.py            EventScheduler — per-game queues, concurrency cap, drop rules
   policy.py, budget.py    Model/persona selection and rolling spend guard
   orchestrator.py         Runs the agents in parallel via Claude Agent SDK
@@ -106,7 +125,9 @@ mcp_servers/
   nba_server.py           Live scores, live boxscores, play-by-play (nba_api)
   rag_server.py           Semantic search over historical games (ChromaDB)
   betting_server.py       Consensus odds + real line movement (The Odds API)
-rag/seed.py               Populates the ChromaDB historical database
+rag/seed.py, facts.py     Populate the ChromaDB database (validation, jsonl + nba_api importers)
+rag/filters.py            Resolve player/team names to stored metadata and build Chroma filters
+rag/data/*.jsonl          Optional extra facts to ingest (not shipped)
 static/index.html         Web dashboard — vanilla JS, no build step
 tests/                    pytest suite (`uv run pytest`)
 ```
