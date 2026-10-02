@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Sports Booth</title>
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -360,10 +361,25 @@
   });
 
   // ── Utilities ──────────────────────────────────────────────────────────────
-  function toPlain(html) {
-    const d = document.createElement('div');
-    d.innerHTML = html;
-    return (d.textContent || '').replace(/\s+/g, ' ').trim();
+  // Commentary is LLM output (and LLMs relay tool/web text), so it is untrusted: never put it in
+  // innerHTML unsanitized. If DOMPurify failed to load, fall back to escaped plain text.
+  function escapeHtml(t) {
+    return String(t).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function renderMarkdown(text) {
+    if (!window.DOMPurify) return `<p>${escapeHtml(text)}</p>`;
+    return DOMPurify.sanitize(marked.parse(text), {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style', 'form', 'input', 'button', 'img'],
+      FORBID_ATTR: ['style'],
+    });
+  }
+
+  // Plain-text preview; DOMParser documents are inert (no script/handler execution).
+  function toPlain(text) {
+    const doc = new DOMParser().parseFromString(renderMarkdown(text), 'text/html');
+    return (doc.body.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
   function tagClass(type) {
@@ -394,6 +410,38 @@
       return { cleanText, chart: JSON.parse(match[1].trim()) };
     } catch {
       return { cleanText, chart: null };
+    }
+  }
+
+  // Chart blocks are untrusted LLM JSON: whitelist the type and coerce every field.
+  const _num = v => (typeof v === 'number' && Number.isFinite(v)) ? v : null;
+  const _str = (v, max = 40) => (typeof v === 'string' || typeof v === 'number') ? String(v).slice(0, max) : '';
+
+  function validateChart(d) {
+    if (!d || typeof d !== 'object') return null;
+    const title = _str(d.title, 60);
+    const items = (max) => (Array.isArray(d.items) ? d.items : []).slice(0, max)
+      .map(i => ({ label: _str(i && i.label), value: _num(i && i.value), highlight: !!(i && i.highlight) }))
+      .filter(i => i.label && i.value !== null);
+    switch (d.type) {
+      case 'stat_bars':
+      case 'historical_bar': {
+        const it = items(d.type === 'stat_bars' ? 5 : 6);
+        return it.length ? { type: d.type, title, items: it } : null;
+      }
+      case 'win_prob': {
+        const p = _num(d.home_prob);
+        return p !== null && p >= 0 && p <= 1
+          ? { type: 'win_prob', home: _str(d.home, 6) || 'Home', away: _str(d.away, 6) || 'Away', home_prob: p }
+          : null;
+      }
+      case 'line_movement': {
+        const open = _num(d.open), current = _num(d.current);
+        return open !== null && current !== null
+          ? { type: 'line_movement', favorite: _str(d.favorite, 6) || '?', open, current }
+          : null;
+      }
+      default: return null;
     }
   }
 
@@ -508,36 +556,39 @@
   }
 
   function renderLineMovement(wrap, data, c) {
-    const fav  = data.favorite || '?';
-    const open = data.open    != null ? data.open    : null;
-    const curr = data.current != null ? data.current : null;
-    const fmt  = v => v == null ? '—' : (v > 0 ? `+${v}` : `${v}`);
-    const moved = (open != null && curr != null) ? Math.abs(curr - open).toFixed(1) : null;
-    const tighter = curr != null && open != null && Math.abs(curr) > Math.abs(open);
+    const fav  = data.favorite;   // validated string
+    const open = data.open;       // validated number
+    const curr = data.current;    // validated number
+    const fmt  = v => v > 0 ? `+${v}` : `${v}`;
+    const moved = Math.abs(curr - open).toFixed(1);
+    const tighter = Math.abs(curr) > Math.abs(open);
     const dirColor = tighter ? '#ef4444' : '#22c55e';
-    const arrow    = tighter ? '▼' : '▲';
-    wrap.innerHTML = `
-      <div class="lm-inner">
-        <div class="lm-label">Spread — ${fav}</div>
-        <div class="lm-row">
-          <div class="lm-col">
-            <div class="lm-val-num">${fmt(open)}</div>
-            <div class="lm-val-lbl">Open</div>
-          </div>
-          <div class="lm-arr">→</div>
-          <div class="lm-col">
-            <div class="lm-val-num" style="color:${c.main}">${fmt(curr)}</div>
-            <div class="lm-val-lbl">Current</div>
-          </div>
-          ${moved ? `<div class="lm-delta" style="color:${dirColor}">${arrow} ${moved} pts</div>` : ''}
-        </div>
-      </div>`;
+    const el = (cls, text, color) => {
+      const d = document.createElement('div');
+      d.className = cls;
+      d.textContent = text;
+      if (color) d.style.color = color;
+      return d;
+    };
+    const col = (num, lbl, color) => {
+      const d = el('lm-col', '');
+      d.append(el('lm-val-num', num, color), el('lm-val-lbl', lbl));
+      return d;
+    };
+    const row = el('lm-row', '');
+    row.append(col(fmt(open), 'Open'), el('lm-arr', '→'), col(fmt(curr), 'Current', c.main));
+    if (moved !== '0.0') row.append(el('lm-delta', `${tighter ? '▼' : '▲'} ${moved} pts`, dirColor));
+    const inner = el('lm-inner', '');
+    inner.append(el('lm-label', `Spread — ${fav}`), row);
+    wrap.appendChild(inner);
     return null;
   }
 
   function renderChart(wrap, chartData, role) {
     const c = _colors[role] || _colors.analyst;
     try {
+      chartData = validateChart(chartData);
+      if (!chartData) return null;
       switch (chartData.type) {
         case 'stat_bars':      return renderStatBars(wrap, chartData, c);
         case 'win_prob':       return renderWinProb(wrap, chartData, c);
@@ -563,11 +614,12 @@
       pill.dataset.gameId = g.gameId;
       const score = g.quarter > 0 ? `${g.awayScore}–${g.homeScore}` : '–';
       const qstr  = g.quarter > 0 ? `Q${g.quarter}${g.clock ? ' ' + g.clock : ''}` : g.status || '';
-      pill.innerHTML = `
-        <div class="pt">${g.label}</div>
-        <div class="pill-sep"></div>
-        <div class="ps">${score}</div>
-        <div class="pq">${qstr}</div>`;
+      [['pt', g.label], ['pill-sep', ''], ['ps', score], ['pq', qstr]].forEach(([cls, text]) => {
+        const d = document.createElement('div');
+        d.className = cls;
+        d.textContent = text;
+        pill.appendChild(d);
+      });
       pill.addEventListener('click', () => selectGame(g.gameId));
       selectorBar.appendChild(pill);
     });
@@ -619,7 +671,7 @@
 
     const textDiv = document.createElement('div');
     textDiv.className = 'ct';
-    textDiv.innerHTML = marked.parse(cleanText);
+    textDiv.innerHTML = renderMarkdown(cleanText);
     card.appendChild(textDiv);
 
     if (chart) {
@@ -647,12 +699,15 @@
 
     cards.forEach(({ eventLabel, text }) => {
       const { cleanText } = parseChartData(text);  // strip chart block for plain preview
-      const plain = toPlain(marked.parse(cleanText));
       const item = document.createElement('div');
       item.className = 'hist-item';
-      item.innerHTML = `
-        <div class="hi-label">${eventLabel}</div>
-        <div class="hi-text">${plain}</div>`;
+      const lbl = document.createElement('div');
+      lbl.className = 'hi-label';
+      lbl.textContent = eventLabel;
+      const txt = document.createElement('div');
+      txt.className = 'hi-text';
+      txt.textContent = toPlain(cleanText);
+      item.append(lbl, txt);
       item.addEventListener('click', () => item.classList.toggle('open'));
       wrap.appendChild(item);
     });
