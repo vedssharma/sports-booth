@@ -53,6 +53,18 @@ def test_big_moments_get_full_booth_on_main_model():
         assert d.model == MAIN and len(d.agents) == 3
 
 
+def test_new_event_types_policy():
+    policy, budget, _ = make_policy(10)
+    for t in ("lead_change", "player_milestone"):
+        d = policy.decide(ev(t))
+        assert d.model == MAIN and len(d.agents) == 3
+    d = policy.decide(ev("foul_trouble"))
+    assert d.model == FAST and d.agents == ("analyst", "degenerate")
+    budget.record(8)   # saver mode: foul trouble is low value and skipped, milestones still covered
+    assert policy.decide(ev("foul_trouble")) is None
+    assert policy.decide(ev("player_milestone")).model == FAST
+
+
 def test_quarter_start_and_join_use_cheap_model_full_booth():
     policy, _, _ = make_policy()
     assert policy.decide(ev("quarter_start")).model == FAST

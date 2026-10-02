@@ -76,6 +76,8 @@ NBA scoreboard (polled every N seconds)
 - A new live game appearing for the first time
 - A quarter or overtime period starting
 - One team outscoring the other by 7+ points within a rolling 3 minutes (scoring run)
+- The lead changing hands (called out as a comeback when the new leader trailed by 10+)
+- A player milestone (20/30/40/50/60 points, 5+ threes, double- or triple-double) or foul trouble, from live box scores
 - A game within 5 points in Q4 or OT (crunch time, rate-limited)
 - A game ending (final score, exactly once)
 - A routine update, only after a quiet stretch
@@ -93,7 +95,7 @@ NBA scoreboard (polled every N seconds)
 ```
 main.py                   Entry point — args, MCP host + server startup
 booth/
-  events.py               EventDetector — snapshots → game events
+  events.py, players.py   EventDetector (scoreboard moments) and PlayerWatcher (box-score moments)
   scheduler.py            EventScheduler — per-game queues, concurrency cap, drop rules
   policy.py, budget.py    Model/persona selection and rolling spend guard
   orchestrator.py         Runs the agents in parallel via Claude Agent SDK

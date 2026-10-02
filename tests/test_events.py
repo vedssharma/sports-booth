@@ -95,3 +95,57 @@ def test_games_tracked_independently():
     d.detect([game(0, 0, gid="A"), game(0, 0, gid="B")], now=0)
     ev = d.detect([game(10, 0, gid="A"), game(2, 0, gid="B")], now=45)
     assert [(e["game_id"], e["type"]) for e in ev] == [("A", "scoring_run")]
+
+
+# ── Lead changes & comebacks ──────────────────────────────────────────────────
+
+def test_lead_change_when_lead_flips():
+    d = EventDetector()
+    d.detect([game(40, 36, 2)], now=0)        # BOS leads
+    ev = d.detect([game(40, 41, 2)], now=45)  # LAL takes it (net swing 5 < run threshold)
+    assert types(ev) == ["lead_change"]
+    assert ev[0]["event"] == "LAL takes the lead" and not ev[0].get("comeback")
+
+
+def test_going_through_a_tie_still_counts_as_a_flip_but_a_tie_alone_does_not():
+    d = EventDetector()
+    d.detect([game(40, 36, 2)], now=0)
+    assert "lead_change" not in types(d.detect([game(41, 41, 2)], now=45))   # tied: nobody took over
+    assert types(d.detect([game(41, 43, 2)], now=90)) == ["lead_change"]     # LAL now leads
+
+
+def test_no_lead_change_events_in_the_opening_minutes():
+    d = EventDetector()
+    d.detect([game(8, 6, 1)], now=0)
+    assert d.detect([game(8, 10, 1)], now=45) == []
+
+
+def test_lead_change_is_rate_limited_in_a_seesaw():
+    d = EventDetector()
+    d.detect([game(40, 36, 2)], now=0)
+    assert types(d.detect([game(40, 41, 2)], now=45)) == ["lead_change"]
+    assert "lead_change" not in types(d.detect([game(44, 41, 2)], now=90))   # flips back within cooldown
+
+
+def test_comeback_is_called_out_with_the_size_of_the_hole():
+    d = EventDetector()
+    d.detect([game(40, 52, 2)], now=0)          # BOS down 12
+    d.detect([game(44, 53, 2)], now=200)
+    ev = d.detect([game(54, 53, 2)], now=400)   # BOS takes the lead (outside the run window)
+    assert types(ev) == ["lead_change"] and ev[0]["comeback"] and ev[0]["deficit_overcome"] == 12
+    assert "comeback from 12 down" in ev[0]["event"]
+
+
+def test_a_flip_caused_by_a_big_run_is_reported_as_the_run():
+    d = EventDetector()
+    d.detect([game(40, 52, 2)], now=0)
+    assert types(d.detect([game(52, 51, 2)], now=45)) == ["scoring_run"]
+
+
+def test_old_hole_does_not_count_as_a_comeback_after_leading_for_a_while():
+    d = EventDetector()
+    d.detect([game(10, 22, 1)], now=0)          # BOS was down 12 early...
+    d.detect([game(60, 50, 2)], now=200)        # ...then led comfortably (hole resets)
+    d.detect([game(60, 62, 3)], now=400)        # LAL flips
+    ev = d.detect([game(70, 62, 3)], now=800)   # BOS flips back later
+    assert types(ev) == ["lead_change"] and not ev[0].get("comeback")

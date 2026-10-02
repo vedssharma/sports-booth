@@ -4,14 +4,16 @@ import os
 
 from booth import odds
 from booth.events import EventDetector, is_final
+from booth.players import PlayerWatcher
 from booth.scheduler import EventScheduler
 from booth.server import manager
-from booth.sources import fetch_started_games, games_payload
+from booth.sources import fetch_boxscores, fetch_started_games, games_payload
 
 
 async def live_loop(interval: int, cli_only: bool, scheduler: EventScheduler) -> None:
     """Poll the NBA live scoreboard and generate commentary on detected events."""
     detector = EventDetector()
+    watcher = PlayerWatcher()
     seen_ids: set[str] = set()
     warned_no_games = False
 
@@ -44,7 +46,18 @@ async def live_loop(interval: int, cli_only: bool, scheduler: EventScheduler) ->
             seen_ids |= new_ids
 
         # Includes games that just went final, so the detector can announce them once
-        for event in detector.detect(started):
+        events = detector.detect(started)
+
+        # Player-level moments (milestones, foul trouble) need a box score per live game
+        boxes = await fetch_boxscores([g["gameId"] for g in live]) if live else {}
+        for g in live:
+            if g["gameId"] in boxes:
+                events.extend(watcher.detect(g, boxes[g["gameId"]]))
+        for g in started:
+            if is_final(g):
+                watcher.forget(g["gameId"])
+
+        for event in events:
             scheduler.submit(event)
 
         if not live and not warned_no_games:

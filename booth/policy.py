@@ -11,7 +11,9 @@ from dataclasses import dataclass
 from booth.budget import BudgetGuard
 from booth.orchestrator import ALL_AGENTS, FAST_MODEL, MODEL
 
-BIG_MOMENTS = {"scoring_run", "close_game", "game_final"}
+BIG_MOMENTS = {"scoring_run", "close_game", "game_final", "lead_change", "player_milestone"}
+# Worth a quick, cheap take (analyst on the lineup impact, degenerate on the line) — never the full booth
+FOUL_TROUBLE_AGENTS = ("analyst", "degenerate")
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class CommentaryPolicy:
         etype = event.get("type")
         state = self.budget.state()
         routine = etype == "game_update" and not event.get("join")
+        low_value = routine or etype == "foul_trouble"
 
         if state == "exhausted":
             # Finals are rare and cheap relative to what they're worth; everything else waits.
@@ -40,15 +43,17 @@ class CommentaryPolicy:
                 return Decision(self.fast_model, ALL_AGENTS, "budget exhausted: final only")
             return None
         if state == "saver":
-            if routine:
+            if low_value:
                 return None
             return Decision(self.fast_model, ALL_AGENTS, "budget saver: cheap model")
 
+        if etype == "foul_trouble":
+            return Decision(self.fast_model, FOUL_TROUBLE_AGENTS, "foul trouble: analyst + degenerate")
         if routine:
             gid = event.get("game_id", "")
             idx = self._rotation[gid] = (self._rotation.get(gid, -1) + 1) % len(ALL_AGENTS)
             return Decision(self.fast_model, (ALL_AGENTS[idx],), "routine update: one persona")
         if etype in BIG_MOMENTS or etype not in ("quarter_start", "game_update"):
-            # Unknown types (e.g. demo milestones) count as big
+            # Unknown types (e.g. demo events) count as big
             return Decision(self.main_model, ALL_AGENTS, "big moment")
         return Decision(self.fast_model, ALL_AGENTS, "routine moment: cheap model")
