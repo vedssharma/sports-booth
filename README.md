@@ -52,7 +52,7 @@ Open `http://localhost:8000` in your browser. If multiple games are live, use th
 NBA scoreboard (polled every N seconds)
         │
         ▼
-   detect_events()          ← compares consecutive snapshots
+   EventDetector.detect()    ← compares snapshots over a rolling window
         │
         ▼ game event (quarter change, scoring run, crunch time, …)
         │

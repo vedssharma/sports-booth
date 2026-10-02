@@ -38,7 +38,7 @@ main.py                      FastAPI server + live polling loop
 
 **MCP servers** run as stdio subprocesses (via `sys.executable`). Each is a standalone FastMCP script that the agent spawns on demand. In live mode a failed or unconfigured data source returns an explicit "unavailable" result (never fabricated data); mock data is served only in `--demo` mode via `BOOTH_MOCK_DATA=1`.
 
-**Live event detection** (`main.py: detect_events()`): compares consecutive scoreboard snapshots and emits events for quarter changes, scoring runs (≥7-point swing), crunch time (Q4/OT within 5), or a generic update. First poll always fires one event per live game.
+**Live event detection** (`booth/events.py: EventDetector`): stateful, compares scoreboard snapshots and emits events for quarter changes, scoring runs (≥7-point net swing within a rolling 3-minute window), crunch time (Q4/OT within 5, rate-limited), final scores (once per game), and a routine update only after a quiet stretch. A newly seen live game fires one join event. Run `uv run pytest` for its unit tests.
 
 **WebSocket protocol** — message types the server sends:
 - `games` — list of live game summaries; triggers selector re-render
