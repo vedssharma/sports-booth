@@ -209,7 +209,17 @@ async def _run_agent(role: str, event_text: str, model: str, on_stream=None) -> 
         max_turns=cfg["max_turns"],
         max_budget_usd=MAX_USD_PER_AGENT or None,
         include_partial_messages=on_stream is not None,
-        permission_mode="bypassPermissions",
+        # Least privilege. Agents see tool output from third-party feeds (play descriptions, odds
+        # APIs), so a prompt-injected string must not be able to reach anything but the persona's
+        # own read-only MCP server:
+        #  - tools=[]            removes every built-in tool (Bash, Write, Edit, WebFetch, Agent, …)
+        #  - allowed_tools       pre-approves just this persona's MCP server
+        #  - permission_mode     "dontAsk" denies anything else outright instead of prompting
+        # It also shrinks each run's prompt ~6x (the built-in tool definitions were most of it) and
+        # skips the ToolSearch round trip, so runs are about 3x cheaper and a turn shorter.
+        tools=[],
+        allowed_tools=[f"mcp__{cfg['server']}"],
+        permission_mode="dontAsk",
     )
     timer = metrics.Timer()
     try:
