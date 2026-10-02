@@ -22,31 +22,46 @@ uv run python main.py --cli
 
 # Adjust poll interval (default: 45s)
 uv run python main.py --interval 30
+
+# Spawn MCP servers per agent run instead of keeping them running
+uv run python main.py --stdio-mcp
+
+# Tests / lint
+uv run pytest
+uv run ruff check --select F .
 ```
 
 ## Architecture
 
-**Three-agent commentary system.** Each NBA game event triggers three parallel `query()` calls via the Claude Agent SDK — one per agent persona. Results are broadcast over WebSocket to the dashboard.
+**Three-agent commentary system.** Game events trigger up to three parallel `query()` calls via the Claude Agent SDK — one per persona. Results are stored in SQLite and broadcast over WebSocket.
 
 ```
-main.py                      FastAPI server + live polling loop
-  └── booth/orchestrator.py  asyncio.gather() of three parallel query() calls
-        ├── run_analyst()     → mcp_servers/nba_server.py    (nba_api live endpoints)
-        ├── run_historian()   → mcp_servers/rag_server.py    (ChromaDB RAG)
-        └── run_degenerate()  → mcp_servers/betting_server.py (The Odds API)
+main.py                    args; starts MCP servers (booth/mcp_host.py) then web server + loop
+  booth/live.py            poll scoreboard → EventDetector → EventScheduler.submit()
+  booth/scheduler.py       per-game workers, concurrency cap, drop/supersede/stale rules
+  booth/pipeline.py        process_event: policy → orchestrator → history → broadcast
+    booth/policy.py        model + personas per event; skips when over budget (booth/budget.py)
+    booth/orchestrator.py  asyncio.gather() of the requested agents
+      analyst    → mcp_servers/nba_server.py     (nba_api live endpoints)
+      historian  → mcp_servers/rag_server.py     (ChromaDB RAG)
+      degenerate → mcp_servers/betting_server.py (The Odds API; booth/odds.py snapshots)
+  booth/server.py          FastAPI + WebSocket; booth/history.py SQLite replay store
 ```
 
-**MCP servers** run as stdio subprocesses (via `sys.executable`). Each is a standalone FastMCP script that the agent spawns on demand. In live mode a failed or unconfigured data source returns an explicit "unavailable" result (never fabricated data); mock data is served only in `--demo` mode via `BOOTH_MOCK_DATA=1`.
+**MCP servers** are FastMCP scripts. `McpHost` starts each once as a local streamable-HTTP server and the orchestrator points agents at them (`use_http_servers`); if startup fails (or `--stdio-mcp`), `_mcp_config` falls back to a fresh stdio subprocess per run. Tools are registered with `@offload(mcp)` (runs the sync function in a thread; returns it unchanged so tests can call it directly). In live mode a failed or unconfigured data source returns an explicit "unavailable" result (never fabricated data); mock data is served only in `--demo` mode via `BOOTH_MOCK_DATA=1`. Servers import `booth.*`, so import `_common` first (it adds the repo root to `sys.path`).
+
+**Cost controls.** `CommentaryPolicy` maps event type → (model, personas): big moments = all personas on `CLAUDE_MODEL`; quarter starts/joins = all on `CLAUDE_MODEL_FAST`; routine `game_update` = one rotating persona on the fast model. `BudgetGuard` sums `ResultMessage.total_cost_usd` over a rolling hour vs `BOOTH_BUDGET_USD_PER_HOUR` (default 5): ≥75% "saver", ≥100% "exhausted" (finals only). Unknown event types (e.g. demo milestones) count as big. Demo mode bypasses the scheduler and plays events in order.
 
 **Live event detection** (`booth/events.py: EventDetector`): stateful, compares scoreboard snapshots and emits events for quarter changes, scoring runs (≥7-point net swing within a rolling 3-minute window), crunch time (Q4/OT within 5, rate-limited), final scores (once per game), and a routine update only after a quiet stretch. A newly seen live game fires one join event. Run `uv run pytest` for its unit tests.
 
 **WebSocket protocol** — message types the server sends:
+- `snapshot` — sent once on connect: `{games, status, history}`. Authoritative; the client replaces local state with it (so reconnects don't duplicate cards)
 - `games` — list of live game summaries; triggers selector re-render
-- `event` — a detected game moment; triggers "thinking" indicators in the feeds
-- `commentary` — the three agents' text; keyed by `event.game_id`
-- `status` — informational string (e.g. "no live games")
+- `event` — a detected game moment; `agents` lists which personas will respond (only those show "thinking")
+- `commentary` — text per persona that ran (absent personas are omitted, not empty); includes `event`, `model`, `cost_usd`
+- `status` — informational string (e.g. "no live games", budget notices)
 
-**Dashboard** (`static/index.html`): pure vanilla JS, no build step. Stores all commentary cards in memory keyed by `gameId`, so switching games is instant. Auto-selects the first game on arrival.
+**Dashboard** (`static/index.html`): pure vanilla JS, no build step. Stores commentary cards in memory keyed by `gameId`, so switching games is instant; history survives reloads via the `snapshot` message. Auto-selects the first game on arrival.
 
 **RAG database** lives at `rag/chroma_db/` (gitignored). Re-seed any time with `uv run python rag/seed.py`; it is idempotent.
 
@@ -55,7 +70,10 @@ main.py                      FastAPI server + live polling loop
 ```
 ANTHROPIC_API_KEY   required
 ODDS_API_KEY        needed for live betting data (demo mode uses mock odds)
-CLAUDE_MODEL        optional — defaults to claude-sonnet-4-6
+CLAUDE_MODEL        optional — big moments; defaults to claude-sonnet-4-6
+CLAUDE_MODEL_FAST   optional — routine events; defaults to claude-haiku-4-5-20251001
+BOOTH_BUDGET_USD_PER_HOUR  optional — default 5, 0 = unlimited
+BOOTH_MAX_USD_PER_AGENT    optional — default 0.50
 ```
 
 Copy `.env.example` → `.env`.
