@@ -8,7 +8,7 @@ A live NBA commentary system powered by three specialized AI agents that watch g
 |---|---|---|
 | **The Analyst** | Data-driven. Surfaces eFG%, plus/minus, lineup splits. | `nba_api` live boxscores |
 | **The Historian** | Encyclopedic. Finds historical parallels and records. | ChromaDB vector database (RAG) |
-| **The Degenerate** | Sharp bettor. Flags line overreactions and soft numbers. | The Odds API (mock data if no key) |
+| **The Degenerate** | Sharp bettor. Flags line overreactions and soft numbers. | The Odds API (requires `ODDS_API_KEY`) |
 
 Each game event triggers all three agents in parallel. Their commentary appears in three columns on the dashboard, updating live via WebSocket.
 
@@ -52,7 +52,7 @@ Open `http://localhost:8000` in your browser. If multiple games are live, use th
 NBA scoreboard (polled every N seconds)
         │
         ▼
-   detect_events()          ← compares consecutive snapshots
+   EventDetector.detect()    ← compares snapshots over a rolling window
         │
         ▼ game event (quarter change, scoring run, crunch time, …)
         │
@@ -73,7 +73,7 @@ NBA scoreboard (polled every N seconds)
 - A game within 5 points in Q4 or OT (crunch time)
 - A periodic update when nothing dramatic was detected
 
-**MCP servers** (`mcp_servers/`) are standalone Python scripts that run as stdio subprocesses. Each exposes a small set of tools via FastMCP. All three fall back to realistic mock data when their external API is unavailable, so the booth always produces commentary.
+**MCP servers** (`mcp_servers/`) are standalone Python scripts that run as stdio subprocesses. Each exposes a small set of tools via FastMCP. In live mode, a failed or unconfigured data source returns an explicit "unavailable" result and the agents say so rather than inventing numbers. Mock data is served only in `--demo` mode.
 
 **RAG database** (`rag/chroma_db/`) is seeded with 18 historical NBA facts using `sentence-transformers` embeddings. The Historian agent queries it semantically — pass a game event description and it returns the most contextually relevant historical precedents.
 
@@ -83,9 +83,9 @@ NBA scoreboard (polled every N seconds)
 main.py                   Entry point — FastAPI server, polling loop, event detection
 booth/orchestrator.py     Runs the three agents in parallel via Claude Agent SDK
 mcp_servers/
-  nba_server.py           Live scores, advanced boxscores (nba_api)
+  nba_server.py           Live scores, live boxscores, play-by-play (nba_api)
   rag_server.py           Semantic search over historical games (ChromaDB)
-  betting_server.py       Live odds and line movement (The Odds API)
+  betting_server.py       Consensus odds + real line movement (The Odds API, snapshots in data/odds.db)
 rag/seed.py               Populates the ChromaDB historical database
 static/index.html         Web dashboard — vanilla JS, no build step
 ```
@@ -95,5 +95,5 @@ static/index.html         Web dashboard — vanilla JS, no build step
 | Variable | Required | Description |
 |---|---|---|
 | `ANTHROPIC_API_KEY` | Yes | Claude API key |
-| `ODDS_API_KEY` | No | [The Odds API](https://the-odds-api.com) key — free tier available. Without it, The Degenerate uses mock line data. |
+| `ODDS_API_KEY` | No | [The Odds API](https://the-odds-api.com) key — free tier available. Without it (outside demo mode) The Degenerate reports that line data is unavailable. |
 | `CLAUDE_MODEL` | No | Defaults to `claude-sonnet-4-6` |

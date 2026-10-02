@@ -31,14 +31,14 @@ uv run python main.py --interval 30
 ```
 main.py                      FastAPI server + live polling loop
   └── booth/orchestrator.py  asyncio.gather() of three parallel query() calls
-        ├── run_analyst()     → mcp_servers/nba_server.py    (nba_api live stats)
+        ├── run_analyst()     → mcp_servers/nba_server.py    (nba_api live endpoints)
         ├── run_historian()   → mcp_servers/rag_server.py    (ChromaDB RAG)
         └── run_degenerate()  → mcp_servers/betting_server.py (The Odds API)
 ```
 
-**MCP servers** run as stdio subprocesses (via `sys.executable`). Each is a standalone FastMCP script that the agent spawns on demand. They all gracefully fall back to mock data when external APIs are unavailable.
+**MCP servers** run as stdio subprocesses (via `sys.executable`). Each is a standalone FastMCP script that the agent spawns on demand. In live mode a failed or unconfigured data source returns an explicit "unavailable" result (never fabricated data); mock data is served only in `--demo` mode via `BOOTH_MOCK_DATA=1`.
 
-**Live event detection** (`main.py: detect_events()`): compares consecutive scoreboard snapshots and emits events for quarter changes, scoring runs (≥7-point swing), crunch time (Q4/OT within 5), or a generic update. First poll always fires one event per live game.
+**Live event detection** (`booth/events.py: EventDetector`): stateful, compares scoreboard snapshots and emits events for quarter changes, scoring runs (≥7-point net swing within a rolling 3-minute window), crunch time (Q4/OT within 5, rate-limited), final scores (once per game), and a routine update only after a quiet stretch. A newly seen live game fires one join event. Run `uv run pytest` for its unit tests.
 
 **WebSocket protocol** — message types the server sends:
 - `games` — list of live game summaries; triggers selector re-render
@@ -54,7 +54,7 @@ main.py                      FastAPI server + live polling loop
 
 ```
 ANTHROPIC_API_KEY   required
-ODDS_API_KEY        optional — betting agent uses realistic mock data without it
+ODDS_API_KEY        needed for live betting data (demo mode uses mock odds)
 CLAUDE_MODEL        optional — defaults to claude-sonnet-4-6
 ```
 
@@ -63,5 +63,5 @@ Copy `.env.example` → `.env`.
 ## Key constraints
 
 - `permission_mode="bypassPermissions"` is intentional — MCP servers only make outbound read-only API calls, never touch the filesystem.
-- The Analyst agent uses `max_turns=10` (vs 6 for others) because it makes at least two sequential tool calls: scoreboard then boxscore.
+- The Analyst agent uses `max_turns=10` (vs 6 for others) because it may chain several tool calls (boxscore, recent plays, lineup split).
 - `rag/seed.py` uses `collection.get()["ids"]` (not `["metadatas"]`) to check for existing records — ChromaDB stores IDs and metadata separately.

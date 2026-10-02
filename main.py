@@ -20,6 +20,8 @@ from fastapi.responses import HTMLResponse
 
 load_dotenv()
 
+from booth import odds
+from booth.events import EventDetector, game_label, is_final
 from booth.orchestrator import run_booth_commentary
 
 # ── Demo game events (used with --demo flag) ──────────────────────────────────
@@ -152,33 +154,11 @@ def _fetch_scoreboard_sync() -> list[dict]:
     return board.games.get_dict()
 
 
-async def fetch_live_games() -> list[dict]:
-    """Return all currently in-progress NBA games (excludes pre-game and final)."""
-    loop = asyncio.get_event_loop()
+async def fetch_started_games() -> list[dict]:
+    """Return every NBA game that has started today — live and final (excludes pre-game)."""
+    loop = asyncio.get_running_loop()
     games = await loop.run_in_executor(None, _fetch_scoreboard_sync)
-    live = []
-    for g in games:
-        status = g.get("gameStatusText", "")
-        period = g.get("period", 0) or 0
-        # period > 0 means game has started; exclude Final
-        if period > 0 and "Final" not in status and "final" not in status.lower():
-            live.append(g)
-    return live
-
-
-def _game_label(game: dict) -> str:
-    home = game.get("homeTeam", {}).get("teamTricode", "?")
-    away = game.get("awayTeam", {}).get("teamTricode", "?")
-    return f"{away} @ {home}"
-
-
-def _game_score(game: dict) -> dict:
-    home = game.get("homeTeam", {})
-    away = game.get("awayTeam", {})
-    return {
-        home.get("teamTricode", "HOME"): home.get("score", 0) or 0,
-        away.get("teamTricode", "AWAY"): away.get("score", 0) or 0,
-    }
+    return [g for g in games if (g.get("period", 0) or 0) > 0]
 
 
 def _games_payload(games: list[dict]) -> list[dict]:
@@ -189,7 +169,7 @@ def _games_payload(games: list[dict]) -> list[dict]:
         away = g.get("awayTeam", {})
         result.append({
             "gameId": g.get("gameId", ""),
-            "label": _game_label(g),
+            "label": game_label(g),
             "homeTeam": home.get("teamTricode", ""),
             "awayTeam": away.get("teamTricode", ""),
             "homeScore": home.get("score", 0) or 0,
@@ -199,142 +179,6 @@ def _games_payload(games: list[dict]) -> list[dict]:
             "status": g.get("gameStatusText", ""),
         })
     return result
-
-
-# ── Event detection ───────────────────────────────────────────────────────────
-
-# How many points one team must outscore the other since last poll to flag a run
-SCORING_RUN_THRESHOLD = 7
-
-
-def detect_events(prev_by_id: dict[str, dict], curr_games: list[dict]) -> list[dict]:
-    """
-    Compare previous game states to current and return meaningful events.
-    On first call (empty prev_by_id), every live game generates a 'game_update' event.
-    """
-    events: list[dict] = []
-
-    for game in curr_games:
-        game_id = game.get("gameId", "")
-        label = _game_label(game)
-        score = _game_score(game)
-        period = game.get("period", 0) or 0
-        clock = game.get("gameClock", "")
-        status = game.get("gameStatusText", "")
-
-        home = game.get("homeTeam", {})
-        away = game.get("awayTeam", {})
-        home_score = home.get("score", 0) or 0
-        away_score = away.get("score", 0) or 0
-        home_code = home.get("teamTricode", "HOME")
-        away_code = away.get("teamTricode", "AWAY")
-
-        prev = prev_by_id.get(game_id)
-
-        # ── First time we see this game ───────────────────────────────────────
-        if prev is None:
-            events.append({
-                "type": "game_update",
-                "game": label,
-                "game_id": game_id,
-                "quarter": period,
-                "time_remaining": clock,
-                "score": score,
-                "event": f"{label} is live — {status}",
-                "context": f"Joining the broadcast in Q{period}. Score: {away_code} {away_score} — {home_code} {home_score}",
-            })
-            continue
-
-        prev_period = prev.get("period", 0) or 0
-        prev_home = prev.get("homeTeam", {})
-        prev_away = prev.get("awayTeam", {})
-        prev_home_score = prev_home.get("score", 0) or 0
-        prev_away_score = prev_away.get("score", 0) or 0
-
-        home_pts = home_score - prev_home_score
-        away_pts = away_score - prev_away_score
-
-        # ── Quarter change ────────────────────────────────────────────────────
-        if period > prev_period:
-            label_q = "Overtime!" if period > 4 else f"Q{period} underway"
-            events.append({
-                "type": "quarter_start",
-                "game": label,
-                "game_id": game_id,
-                "quarter": period,
-                "time_remaining": clock,
-                "score": score,
-                "event": f"{label} — {label_q}",
-                "context": (
-                    f"End of Q{prev_period} score: {away_code} {prev_away_score} — "
-                    f"{home_code} {prev_home_score}. Margin: {abs(prev_home_score - prev_away_score)} pts."
-                ),
-            })
-
-        # ── Scoring run ───────────────────────────────────────────────────────
-        elif home_pts - away_pts >= SCORING_RUN_THRESHOLD:
-            events.append({
-                "type": "scoring_run",
-                "game": label,
-                "game_id": game_id,
-                "quarter": period,
-                "time_remaining": clock,
-                "score": score,
-                "event": f"{home_code} on a {home_pts}-{away_pts} run",
-                "context": (
-                    f"{home_code} extending lead to {home_score - away_score:+d}. "
-                    f"Current score: {away_code} {away_score} — {home_code} {home_score}"
-                ),
-            })
-
-        elif away_pts - home_pts >= SCORING_RUN_THRESHOLD:
-            events.append({
-                "type": "scoring_run",
-                "game": label,
-                "game_id": game_id,
-                "quarter": period,
-                "time_remaining": clock,
-                "score": score,
-                "event": f"{away_code} on a {away_pts}-{home_pts} run",
-                "context": (
-                    f"{away_code} closing/extending lead to {away_score - home_score:+d}. "
-                    f"Current score: {away_code} {away_score} — {home_code} {home_score}"
-                ),
-            })
-
-        # ── Crunch time (Q4/OT, within 5) ────────────────────────────────────
-        elif period >= 4 and abs(home_score - away_score) <= 5 and (home_pts + away_pts) > 0:
-            events.append({
-                "type": "close_game",
-                "game": label,
-                "game_id": game_id,
-                "quarter": period,
-                "time_remaining": clock,
-                "score": score,
-                "event": f"Crunch time — game within {abs(home_score - away_score)}",
-                "context": (
-                    f"{away_code} {away_score} — {home_code} {home_score}. "
-                    f"{'Tie game!' if home_score == away_score else f'{home_code if home_score > away_score else away_code} leads by {abs(home_score - away_score)}'}"
-                ),
-            })
-
-        # ── Periodic update when nothing dramatic happened ─────────────────────
-        else:
-            events.append({
-                "type": "game_update",
-                "game": label,
-                "game_id": game_id,
-                "quarter": period,
-                "time_remaining": clock,
-                "score": score,
-                "event": f"{label} — live update",
-                "context": (
-                    f"Current score: {away_code} {away_score} — {home_code} {home_score}. "
-                    f"Q{period} | {status}"
-                ),
-            })
-
-    return events
 
 
 # ── Commentary helpers ────────────────────────────────────────────────────────
@@ -363,42 +207,48 @@ async def _process_event(event: dict, cli_only: bool) -> None:
 
 async def live_loop(interval: int, cli_only: bool) -> None:
     """Poll the NBA live scoreboard and generate commentary on detected events."""
-    prev_by_id: dict[str, dict] = {}
+    detector = EventDetector()
+    seen_ids: set[str] = set()
     warned_no_games = False
 
     print(f"  Mode: LIVE  |  Polling every {interval}s")
 
     while True:
         try:
-            games = await fetch_live_games()
+            started = await fetch_started_games()
         except Exception as e:
             print(f"  ⚠️  Scoreboard fetch error: {e}. Retrying in {interval}s…")
             await asyncio.sleep(interval)
             continue
 
-        if not games:
-            if not warned_no_games:
-                msg = "No live NBA games right now. Booth will activate automatically when games start."
-                print(f"\n  ⏸  {msg}")
-                if not cli_only:
-                    await manager.broadcast({"type": "status", "message": msg})
-                warned_no_games = True
-            await asyncio.sleep(interval)
-            continue
+        live = [g for g in started if not is_final(g)]
 
-        warned_no_games = False
+        if live:
+            warned_no_games = False
+            # Broadcast current game list so the dashboard can render the selector
+            if not cli_only:
+                await manager.broadcast({"type": "games", "data": _games_payload(live)})
 
-        # Broadcast current game list so the dashboard can render the selector
-        if not cli_only:
-            await manager.broadcast({"type": "games", "data": _games_payload(games)})
+            # Record opening odds the first time we see a game so line movement is real
+            new_ids = {g["gameId"] for g in live} - seen_ids
+            if new_ids and os.getenv("ODDS_API_KEY"):
+                try:
+                    await asyncio.get_running_loop().run_in_executor(
+                        None, odds.snapshot_now, os.environ["ODDS_API_KEY"])
+                except Exception as e:
+                    print(f"  ⚠️  Odds snapshot failed: {e}")
+            seen_ids |= new_ids
 
-        events = detect_events(prev_by_id, games)
-
-        # Update snapshot
-        prev_by_id = {g["gameId"]: g for g in games}
-
-        for event in events:
+        # Includes games that just went final, so the detector can announce them once
+        for event in detector.detect(started):
             await _process_event(event, cli_only)
+
+        if not live and not warned_no_games:
+            msg = "No live NBA games right now. Booth will activate automatically when games start."
+            print(f"\n  ⏸  {msg}")
+            if not cli_only:
+                await manager.broadcast({"type": "status", "message": msg})
+            warned_no_games = True
 
         print(f"\n  ⏱  Next poll in {interval}s…")
         await asyncio.sleep(interval)
@@ -466,6 +316,9 @@ def main() -> None:
         return
 
     args = _parse_args()
+    if args.demo:
+        # Mock tool data is only allowed in demo mode; live mode reports "unavailable" instead.
+        os.environ["BOOTH_MOCK_DATA"] = "1"
 
     print("🏀 Sports Booth starting…")
     print(f"   Model:    {os.getenv('CLAUDE_MODEL', 'claude-sonnet-4-6')}")

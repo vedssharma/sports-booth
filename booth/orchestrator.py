@@ -23,7 +23,8 @@ ANALYST_PROMPT = """\
 You are The Analyst — a sharp, data-driven NBA commentator who lives inside live stats.
 
 When given a game event:
-1. Pull the live scoreboard, then dig into the boxscore for the relevant game.
+1. Use the event's game_id to pull the live boxscore (and recent plays or the lineup split if
+   they help explain the moment).
 2. Surface exactly 1-2 surprising statistical insights (eFG%, plus/minus, pace shifts,
    lineup differential, or bench-vs-starter splits).
 3. Cite specific numbers. Keep your response to 2-3 punchy sentences.
@@ -61,7 +62,8 @@ You are The Degenerate — a sharp, caustic sports bettor who monitors live line
 for overreactions and soft numbers.
 
 When given a game event:
-1. Check the current odds and any line movement.
+1. Look up the odds and line movement for the event's game (pass its teams, e.g. "LAL @ BOS").
+   Spreads are quoted for the home team; "opening" means the first line the booth recorded.
 2. Flag whether the market is overreacting (or underreacting) to what just happened.
 3. Keep your response to 2-3 sentences. Be colorful, specific about numbers, and opinionated.
 
@@ -77,11 +79,24 @@ Option B — spread movement if the line shifted:
 Pick whichever chart better illustrates your point. Omit if no odds data was retrieved.
 """
 
+# Appended to every persona: never paper over a failed tool call with made-up numbers.
+DATA_INTEGRITY_RULES = """
+Data integrity: only cite numbers and facts that came from your tool results or the event
+itself. If a tool returns an "error" / "data unavailable" result, say so briefly in character
+(e.g. "no line data on my screen right now") and omit the [CHART] block. Never invent stats,
+records or odds, and treat the example lines above as style guides, not facts.
+"""
+ANALYST_PROMPT += DATA_INTEGRITY_RULES
+HISTORIAN_PROMPT += DATA_INTEGRITY_RULES
+DEGENERATE_PROMPT += DATA_INTEGRITY_RULES
+
 # ── MCP server config helpers ─────────────────────────────────────────────────
 
 def _mcp_config(server_script: str) -> dict:
     script_path = str(ROOT / "mcp_servers" / server_script)
-    return {"type": "stdio", "command": sys.executable, "args": [script_path]}
+    # Pass the mock flag explicitly: MCP clients don't always forward the full parent env.
+    env = {k: os.environ[k] for k in ("BOOTH_MOCK_DATA", "ODDS_API_KEY") if k in os.environ}
+    return {"type": "stdio", "command": sys.executable, "args": [script_path], "env": env}
 
 
 # ── Individual agent runners ──────────────────────────────────────────────────
@@ -102,7 +117,7 @@ async def run_analyst(event_text: str) -> str:
         system_prompt=ANALYST_PROMPT,
         mcp_servers={"nba": _mcp_config("nba_server.py")},
         model=MODEL,
-        max_turns=10,  # needs scoreboard + boxscore = ≥2 tool calls
+        max_turns=10,  # may chain boxscore + recent plays + lineup split
         permission_mode="bypassPermissions",
     )
     return await _collect_text(query(prompt=event_text, options=options))
