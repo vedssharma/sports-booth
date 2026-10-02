@@ -39,6 +39,7 @@ class Settings:
     port: int
     auth_token: str | None
     allow_insecure: bool
+    allowed_origins: tuple[str, ...]   # extra WebSocket Origins to accept (e.g. behind a reverse proxy)
     log_level: str
     log_format: str
     odds_ttl_s: float
@@ -57,7 +58,7 @@ class Settings:
             "budget_usd_per_hour": self.budget_usd_per_hour or "unlimited",
             "max_usd_per_agent": self.max_usd_per_agent or "unlimited",
             "mock_data": self.mock_data, "host": self.host, "port": self.port,
-            "allow_insecure": self.allow_insecure,
+            "allow_insecure": self.allow_insecure, "allowed_origins": list(self.allowed_origins) or "same-origin only",
             "log_level": self.log_level, "log_format": self.log_format,
             "odds_ttl_s": self.odds_ttl_s, "odds_db": str(self.odds_db), "history_db": self.history_db,
         }
@@ -130,6 +131,19 @@ def _choice(env, name: str, default: str, choices: tuple[str, ...], errors: list
     return value
 
 
+def _origins(env, name: str, errors: list[str]) -> tuple[str, ...]:
+    raw = _text(env, name)
+    if raw is None:
+        return ()
+    out = []
+    for item in (p.strip().rstrip("/") for p in raw.split(",") if p.strip()):
+        if not item.lower().startswith(("http://", "https://")) or "/" in item.split("://", 1)[1]:
+            errors.append(f"{name}: {item!r} must look like https://host[:port] (no path)")
+        else:
+            out.append(item.lower())
+    return tuple(out)
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     env = os.environ if env is None else env
     errors: list[str] = []
@@ -146,6 +160,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         port=_int(env, "BOOTH_PORT", 8000, errors, 1, 65535),
         auth_token=_text(env, "BOOTH_AUTH_TOKEN"),
         allow_insecure=_bool(env, "BOOTH_ALLOW_INSECURE", errors),
+        allowed_origins=_origins(env, "BOOTH_ALLOWED_ORIGINS", errors),
         log_level=_choice(env, "BOOTH_LOG_LEVEL", "INFO", LOG_LEVELS, errors),
         log_format=_choice(env, "BOOTH_LOG_FORMAT", "text", LOG_FORMATS, errors),
         odds_ttl_s=_float(env, "BOOTH_ODDS_TTL", 60.0, errors),

@@ -143,3 +143,12 @@ def test_main_refuses_unauthenticated_network_binding():
 def test_main_refuses_to_start_without_an_api_key():
     r = run_main()
     assert r.returncode == 2 and "ANTHROPIC_API_KEY" in r.stderr
+
+
+def test_allowed_origins_are_parsed_and_validated():
+    s = load(BOOTH_ALLOWED_ORIGINS="https://Booth.Example.com/, http://localhost:3000")
+    assert s.allowed_origins == ("https://booth.example.com", "http://localhost:3000")
+    assert load().allowed_origins == ()
+    with pytest.raises(config.ConfigError) as e:
+        load(BOOTH_ALLOWED_ORIGINS="booth.example.com,https://ok.example.com/path")
+    assert len(e.value.errors) == 2

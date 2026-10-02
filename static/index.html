@@ -1009,7 +1009,11 @@
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
     const ws = new WebSocket(`${proto}://${location.host}/ws`);
     ws.onopen  = () => { reconnectAttempts = 0; setStatus('connected', 'Live'); };
-    ws.onclose = () => {
+    ws.onclose = ev => {
+      if (ev.code === 1008) {   // server said "unauthorized": retrying can't help
+        setStatus('error', 'Unauthorized — open /?token=<your BOOTH_AUTH_TOKEN> once');
+        return;
+      }
       // 1s, 2s, 4s … capped at 30s, with jitter so a server restart doesn't get a thundering herd
       const delay = Math.min(30000, 1000 * 2 ** reconnectAttempts++) * (0.8 + Math.random() * 0.4);
       setStatus('error', `Disconnected — retrying in ${Math.round(delay / 1000)}s…`);
