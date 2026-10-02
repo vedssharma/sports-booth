@@ -17,10 +17,12 @@ try:
 except ImportError:
     CLINotFoundError = AgentProcessError = Exception  # type: ignore[assignment,misc]
 
+from booth import config  # noqa: E402
+
 ROOT = Path(__file__).parent.parent
 # Big moments (runs, crunch time, finals) use MODEL; routine events use the cheaper FAST_MODEL
-MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-FAST_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-4-5-20251001")
+MODEL = config.get().model
+FAST_MODEL = config.get().fast_model
 
 # ── Agent system prompts ──────────────────────────────────────────────────────
 
@@ -134,7 +136,7 @@ ALL_AGENTS = tuple(AGENTS)
 
 # Hard ceiling on what one agent run may spend (0 disables). A guard against runaway tool loops;
 # the hourly budget in booth/budget.py is the real spending control.
-MAX_USD_PER_AGENT = float(os.getenv("BOOTH_MAX_USD_PER_AGENT", "0.50"))
+MAX_USD_PER_AGENT = config.get().max_usd_per_agent
 
 
 async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
