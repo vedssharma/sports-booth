@@ -63,7 +63,7 @@ main.py                    args; starts MCP servers (booth/mcp_host.py) then web
 
 **Dashboard** (`static/index.html`): pure vanilla JS, no build step. Stores commentary cards in memory keyed by `gameId`, so switching games is instant; history survives reloads via the `snapshot` message. Auto-selects the first game on arrival.
 
-**RAG database** lives at `rag/chroma_db/` (gitignored). Re-seed any time with `uv run python rag/seed.py`; it is idempotent.
+**RAG database** lives at `rag/chroma_db/` (gitignored). Re-seed any time with `uv run python rag/seed.py` (idempotent; `--rebuild` drops first, `--fetch-leaders` adds nba_api all-time leaderboards). Facts come from `rag/seed.py`'s curated list plus `rag/data/*.jsonl`, validated by `rag/facts.py` before anything is written. The RAG server's tools resolve player/team wording to stored metadata (`rag/filters.py`) and pass Chroma `where` filters; unmatched filters are dropped with a note. Tests use an in-process Chroma with a fake hashing embedder (no model download).
 
 ## Environment
 

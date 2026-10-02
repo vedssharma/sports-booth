@@ -88,7 +88,20 @@ NBA scoreboard (polled every N seconds)
 
 **MCP servers** (`mcp_servers/`) are FastMCP scripts. On startup `main.py` launches each once as a long-lived local HTTP server (so the Historian's embedding model loads once, not per event) and falls back to per-run stdio subprocesses if that fails or with `--stdio-mcp`. Tools run in worker threads, NBA calls are cached for 10s, and Odds API calls are rate-limited to one per minute to protect the monthly quota. In live mode, a failed or unconfigured data source returns an explicit "unavailable" result and the agents say so rather than inventing numbers. Mock data is served only in `--demo` mode.
 
-**RAG database** (`rag/chroma_db/`) is seeded with 18 historical NBA facts using `sentence-transformers` embeddings. The Historian agent queries it semantically — pass a game event description and it returns the most contextually relevant historical precedents.
+**RAG database** (`rag/chroma_db/`) holds historical NBA facts embedded with `sentence-transformers`. The Historian searches it semantically and can narrow results with exact metadata filters (player, team, category, year range) — names are resolved forgivingly ("LeBron", "LAL", "Lakers"), and a filter that matches nothing is dropped with a note rather than returning an empty answer. Grow it three ways:
+
+```bash
+uv run python rag/seed.py                  # curated facts + any rag/data/*.jsonl
+uv run python rag/seed.py --fetch-leaders  # also all-time career leaderboards from nba_api (needs network)
+uv run python rag/seed.py --rebuild        # drop and re-create the collection
+```
+
+Drop your own facts in `rag/data/*.jsonl`, one JSON object per line (`#` comment lines allowed). `id` and `text` are required and ids must be unique; everything else is metadata (`player`, `team`, `year` as an integer, `category`, …). The whole import is validated before the database is touched, with errors reported as `file:line`:
+
+```json
+{"id": "example_001", "text": "Jane Doe scored 50 points in a playoff game for the Example Hawks in 1999.", "player": "Jane Doe", "team": "Example Hawks", "year": 1999, "category": "playoff_performance"}
+```
+
 
 ## Project structure
 
@@ -108,7 +121,9 @@ mcp_servers/
   nba_server.py           Live scores, live boxscores, play-by-play (nba_api)
   rag_server.py           Semantic search over historical games (ChromaDB)
   betting_server.py       Consensus odds + real line movement (The Odds API)
-rag/seed.py               Populates the ChromaDB historical database
+rag/seed.py, facts.py     Populate the ChromaDB database (validation, jsonl + nba_api importers)
+rag/filters.py            Resolve player/team names to stored metadata and build Chroma filters
+rag/data/*.jsonl          Optional extra facts to ingest (not shipped)
 static/index.html         Web dashboard — vanilla JS, no build step
 tests/                    pytest suite (`uv run pytest`)
 ```
