@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Historical NBA RAG MCP server — ChromaDB + sentence-transformers for semantic search."""
 import json
-import sys
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP

@@ -3,7 +3,7 @@ from booth.orchestrator import run_booth_commentary
 from booth.server import manager
 
 
-async def process_event(event: dict, cli_only: bool) -> None:
+async def process_event(event: dict, cli_only: bool = False) -> None:
     label = event.get("event", event.get("type", "event"))
     print(f"\n{'─'*60}")
     print(f"  {label}")

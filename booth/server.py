@@ -58,4 +58,6 @@ async def ws_endpoint(ws: WebSocket) -> None:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "clients": manager.count}
+    scheduler = getattr(app.state, "scheduler", None)
+    return {"status": "ok", "clients": manager.count,
+            "scheduler": scheduler.snapshot() if scheduler else None}

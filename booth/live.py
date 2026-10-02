@@ -4,12 +4,12 @@ import os
 
 from booth import odds
 from booth.events import EventDetector, is_final
-from booth.pipeline import process_event
+from booth.scheduler import EventScheduler
 from booth.server import manager
 from booth.sources import fetch_started_games, games_payload
 
 
-async def live_loop(interval: int, cli_only: bool) -> None:
+async def live_loop(interval: int, cli_only: bool, scheduler: EventScheduler) -> None:
     """Poll the NBA live scoreboard and generate commentary on detected events."""
     detector = EventDetector()
     seen_ids: set[str] = set()
@@ -45,7 +45,7 @@ async def live_loop(interval: int, cli_only: bool) -> None:
 
         # Includes games that just went final, so the detector can announce them once
         for event in detector.detect(started):
-            await process_event(event, cli_only)
+            scheduler.submit(event)
 
         if not live and not warned_no_games:
             msg = "No live NBA games right now. Booth will activate automatically when games start."

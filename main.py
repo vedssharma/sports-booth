@@ -10,6 +10,7 @@ CLI usage:
 import argparse
 import asyncio
 import os
+from functools import partial
 
 import uvicorn
 from dotenv import load_dotenv
@@ -18,6 +19,8 @@ load_dotenv()
 
 from booth.demo import demo_loop
 from booth.live import live_loop
+from booth.pipeline import process_event
+from booth.scheduler import EventScheduler
 from booth.server import app
 
 
@@ -31,10 +34,19 @@ def _parse_args() -> argparse.Namespace:
 
 
 async def _run(interval: int, cli_only: bool, demo: bool, port: int) -> None:
-    loop_fn = demo_loop if demo else live_loop
+    if demo:
+        # Demo plays its scripted events in order, waiting for each — no scheduler needed
+        async def loop_fn() -> None:
+            await demo_loop(interval, cli_only)
+    else:
+        scheduler = EventScheduler(partial(process_event, cli_only=cli_only))
+        app.state.scheduler = scheduler
+
+        async def loop_fn() -> None:
+            await live_loop(interval, cli_only, scheduler)
 
     if cli_only:
-        await loop_fn(interval, cli_only=True)
+        await loop_fn()
         return
 
     config = uvicorn.Config(app, host="0.0.0.0", port=port, log_level="warning")
@@ -43,7 +55,7 @@ async def _run(interval: int, cli_only: bool, demo: bool, port: int) -> None:
     async def _start_loop() -> None:
         await asyncio.sleep(1)  # let server bind
         print(f"  Dashboard: http://localhost:{port}")
-        await loop_fn(interval, cli_only=False)
+        await loop_fn()
 
     await asyncio.gather(server.serve(), _start_loop())
 
