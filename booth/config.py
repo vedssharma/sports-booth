@@ -45,6 +45,7 @@ class Settings:
     odds_ttl_s: float
     odds_db: Path
     history_db: str          # a path, or ":memory:"
+    rag_db: Path             # ChromaDB directory for the historical facts
 
     def describe(self) -> dict:
         """Effective configuration for logs/--check-config, with secrets masked."""
@@ -61,6 +62,7 @@ class Settings:
             "allow_insecure": self.allow_insecure, "allowed_origins": list(self.allowed_origins) or "same-origin only",
             "log_level": self.log_level, "log_format": self.log_format,
             "odds_ttl_s": self.odds_ttl_s, "odds_db": str(self.odds_db), "history_db": self.history_db,
+            "rag_db": str(self.rag_db),
         }
 
 
@@ -165,6 +167,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         log_format=_choice(env, "BOOTH_LOG_FORMAT", "text", LOG_FORMATS, errors),
         odds_ttl_s=_float(env, "BOOTH_ODDS_TTL", 60.0, errors),
         odds_db=Path(_text(env, "BOOTH_ODDS_DB") or ROOT / "data" / "odds.db"),
+        rag_db=Path(_text(env, "BOOTH_RAG_DB") or ROOT / "rag" / "chroma_db"),
         history_db=":memory:" if mock else (_text(env, "BOOTH_HISTORY_DB") or str(ROOT / "data" / "history.db")),
     )
     if errors:

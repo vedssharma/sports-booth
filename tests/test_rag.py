@@ -185,3 +185,8 @@ def test_empty_database_is_reported_unavailable(monkeypatch):
     monkeypatch.setattr(rag_server, "_get_store", lambda: (col, FakeEmbedder()))
     monkeypatch.delenv("BOOTH_MOCK_DATA", raising=False)
     assert "unavailable" in json.loads(rag_server.search_historical_games("x"))["error"]
+
+
+def test_chroma_telemetry_is_off_by_default():
+    import os
+    assert os.environ.get("ANONYMIZED_TELEMETRY") == "False"      # set by rag_server on import

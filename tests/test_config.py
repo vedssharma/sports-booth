@@ -152,3 +152,8 @@ def test_allowed_origins_are_parsed_and_validated():
     with pytest.raises(config.ConfigError) as e:
         load(BOOTH_ALLOWED_ORIGINS="booth.example.com,https://ok.example.com/path")
     assert len(e.value.errors) == 2
+
+
+def test_rag_db_location_is_configurable():
+    assert load().rag_db == ROOT / "rag" / "chroma_db"
+    assert load(BOOTH_RAG_DB="/data/chroma_db").rag_db == Path("/data/chroma_db")
