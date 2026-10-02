@@ -8,14 +8,16 @@ import os
 import sys
 from pathlib import Path
 
-from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
+from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, ResultMessage, TextBlock
 try:
     from claude_agent_sdk import CLINotFoundError, ProcessError as AgentProcessError
 except ImportError:
     CLINotFoundError = AgentProcessError = Exception  # type: ignore[assignment,misc]
 
 ROOT = Path(__file__).parent.parent
+# Big moments (runs, crunch time, finals) use MODEL; routine events use the cheaper FAST_MODEL
 MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
+FAST_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-4-5-20251001")
 
 # ── Agent system prompts ──────────────────────────────────────────────────────
 
@@ -112,83 +114,86 @@ def _mcp_config(name: str) -> dict:
     return {"type": "stdio", "command": sys.executable, "args": [script_path], "env": env}
 
 
-# ── Individual agent runners ──────────────────────────────────────────────────
+# ── Agent runners ─────────────────────────────────────────────────────────────
 
-async def _collect_text(aiter) -> str:
-    """Drain an async message iterator and return all assistant text."""
+# Per-persona settings. The Analyst may chain boxscore + recent plays + lineup split.
+AGENTS = {
+    "analyst": {"prompt": ANALYST_PROMPT, "server": "nba", "max_turns": 10,
+                "fallback": "Stats analysis unavailable."},
+    "historian": {"prompt": HISTORIAN_PROMPT, "server": "rag", "max_turns": 6,
+                  "fallback": "Historical context unavailable."},
+    "degenerate": {"prompt": DEGENERATE_PROMPT, "server": "betting", "max_turns": 6,
+                   "fallback": "Line data unavailable."},
+}
+ALL_AGENTS = tuple(AGENTS)
+
+# Hard ceiling on what one agent run may spend (0 disables). A guard against runaway tool loops;
+# the hourly budget in booth/budget.py is the real spending control.
+MAX_USD_PER_AGENT = float(os.getenv("BOOTH_MAX_USD_PER_AGENT", "0.50"))
+
+
+async def _collect(aiter) -> tuple[str, float]:
+    """Drain an async message iterator; return (all assistant text, reported cost in USD)."""
     parts: list[str] = []
+    cost = 0.0
     async for msg in aiter:
         if isinstance(msg, AssistantMessage):
             for block in msg.content:
                 if isinstance(block, TextBlock):
                     parts.append(block.text)
-    return "".join(parts).strip()
+        elif isinstance(msg, ResultMessage):
+            cost = msg.total_cost_usd or 0.0
+    return "".join(parts).strip(), cost
 
 
-async def run_analyst(event_text: str) -> str:
+async def _run_agent(role: str, event_text: str, model: str) -> tuple[str, float]:
+    cfg = AGENTS[role]
     options = ClaudeAgentOptions(
-        system_prompt=ANALYST_PROMPT,
-        mcp_servers={"nba": _mcp_config("nba")},
-        model=MODEL,
-        max_turns=10,  # may chain boxscore + recent plays + lineup split
+        system_prompt=cfg["prompt"],
+        mcp_servers={cfg["server"]: _mcp_config(cfg["server"])},
+        model=model,
+        max_turns=cfg["max_turns"],
+        max_budget_usd=MAX_USD_PER_AGENT or None,
         permission_mode="bypassPermissions",
     )
-    return await _collect_text(query(prompt=event_text, options=options))
-
-
-async def run_historian(event_text: str) -> str:
-    options = ClaudeAgentOptions(
-        system_prompt=HISTORIAN_PROMPT,
-        mcp_servers={"rag": _mcp_config("rag")},
-        model=MODEL,
-        max_turns=6,
-        permission_mode="bypassPermissions",
-    )
-    return await _collect_text(query(prompt=event_text, options=options))
-
-
-async def run_degenerate(event_text: str) -> str:
-    options = ClaudeAgentOptions(
-        system_prompt=DEGENERATE_PROMPT,
-        mcp_servers={"betting": _mcp_config("betting")},
-        model=MODEL,
-        max_turns=6,
-        permission_mode="bypassPermissions",
-    )
-    return await _collect_text(query(prompt=event_text, options=options))
+    return await _collect(query(prompt=event_text, options=options))
 
 
 # ── Public interface ──────────────────────────────────────────────────────────
 
-async def run_booth_commentary(event: dict) -> dict:
+def _describe_error(exc: Exception) -> str:
+    if isinstance(exc, CLINotFoundError):
+        return "[Error: Claude CLI not found — is claude installed and on PATH?]"
+    if isinstance(exc, AgentProcessError):
+        return f"[Agent process error: {exc}]"
+    return f"[Error: {exc}]"
+
+
+async def run_booth_commentary(event: dict, model: str | None = None,
+                               agents: tuple[str, ...] = ALL_AGENTS) -> dict:
     """
-    Run all three booth agents in parallel for a game event.
-    Returns a dict with keys: event, analyst, historian, degenerate.
+    Run the requested booth agents in parallel for a game event.
+    Returns {event, model, cost_usd, <one key per agent that ran>}. Agents that were not
+    requested are absent from the result (not empty strings).
     """
+    model = model or MODEL
     event_text = (
         f"Game event:\n{json.dumps(event, indent=2)}\n\n"
         "Provide your expert commentary on this moment."
     )
 
-    analyst, historian, degenerate = await asyncio.gather(
-        run_analyst(event_text),
-        run_historian(event_text),
-        run_degenerate(event_text),
+    results = await asyncio.gather(
+        *(_run_agent(role, event_text, model) for role in agents),
         return_exceptions=True,
     )
 
-    def _safe(result, fallback: str) -> str:
-        if isinstance(result, CLINotFoundError):
-            return "[Error: Claude CLI not found — is claude installed and on PATH?]"
-        if isinstance(result, AgentProcessError):
-            return f"[Agent process error: {result}]"
+    out: dict = {"event": event, "model": model, "cost_usd": 0.0}
+    for role, result in zip(agents, results):
         if isinstance(result, Exception):
-            return f"[Error: {result}]"
-        return result or fallback
-
-    return {
-        "event": event,
-        "analyst": _safe(analyst, "Stats analysis unavailable."),
-        "historian": _safe(historian, "Historical context unavailable."),
-        "degenerate": _safe(degenerate, "Line data unavailable."),
-    }
+            out[role] = _describe_error(result)
+        else:
+            text, cost = result
+            out[role] = text or AGENTS[role]["fallback"]
+            out["cost_usd"] += cost
+    out["cost_usd"] = round(out["cost_usd"], 4)
+    return out

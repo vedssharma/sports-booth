@@ -711,8 +711,8 @@
   }
 
   // ── Thinking indicator ─────────────────────────────────────────────────────
-  function showThinking() {
-    roles.forEach(role => {
+  function showThinking(active = roles) {
+    active.forEach(role => {
       clearChart(role);
       const el = document.createElement('div');
       el.className = 'thinking';
@@ -772,7 +772,7 @@
     recordEvent(data);
     if (data.game_id !== selectedGameId) return;
     showHeader(data.game_id);
-    showThinking();
+    showThinking(data.agents || roles);
   }
 
   function handleCommentary(data, render = true) {

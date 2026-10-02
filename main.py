@@ -20,8 +20,8 @@ load_dotenv()
 from booth.demo import demo_loop
 from booth.live import live_loop
 from booth.mcp_host import McpHost
-from booth.orchestrator import use_http_servers
-from booth.pipeline import process_event
+from booth.orchestrator import FAST_MODEL, MODEL, use_http_servers
+from booth.pipeline import budget, process_event
 from booth.scheduler import EventScheduler
 from booth.server import app
 
@@ -93,7 +93,8 @@ def main() -> None:
         os.environ["BOOTH_MOCK_DATA"] = "1"
 
     print("🏀 Sports Booth starting…")
-    print(f"   Model:    {os.getenv('CLAUDE_MODEL', 'claude-sonnet-4-6')}")
+    print(f"   Models:   {MODEL} (big moments), {FAST_MODEL} (routine)")
+    print(f"   Budget:   {'unlimited' if not budget.cap else f'${budget.cap:g}/hour'} (BOOTH_BUDGET_USD_PER_HOUR)")
     print(f"   Interval: {args.interval}s")
     if args.demo:
         print("   ⚠️  Demo mode — using hardcoded Lakers vs Celtics events")

@@ -79,5 +79,7 @@ async def ws_endpoint(ws: WebSocket) -> None:
 @app.get("/health")
 async def health() -> dict:
     scheduler = getattr(app.state, "scheduler", None)
+    from booth.pipeline import budget  # local import: pipeline imports this module
     return {"status": "ok", "clients": manager.count,
-            "scheduler": scheduler.snapshot() if scheduler else None}
+            "scheduler": scheduler.snapshot() if scheduler else None,
+            "budget": budget.snapshot()}
