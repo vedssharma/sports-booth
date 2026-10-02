@@ -23,5 +23,5 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = [".", "mcp_servers"]
 testpaths = ["tests"]

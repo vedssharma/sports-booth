@@ -117,7 +117,7 @@ def _conn() -> sqlite3.Connection:
 
 
 def record_snapshots(events: list[dict], now: float | None = None) -> None:
-    now = now or time.time()
+    now = time.time() if now is None else now
     with _conn() as conn:
         conn.executemany(
             "INSERT INTO snapshots VALUES (?,?,?,?,?,?,?,?)",
