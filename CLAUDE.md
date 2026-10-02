@@ -36,7 +36,7 @@ main.py                      FastAPI server + live polling loop
         └── run_degenerate()  → mcp_servers/betting_server.py (The Odds API)
 ```
 
-**MCP servers** run as stdio subprocesses (via `sys.executable`). Each is a standalone FastMCP script that the agent spawns on demand. They all gracefully fall back to mock data when external APIs are unavailable.
+**MCP servers** run as stdio subprocesses (via `sys.executable`). Each is a standalone FastMCP script that the agent spawns on demand. In live mode a failed or unconfigured data source returns an explicit "unavailable" result (never fabricated data); mock data is served only in `--demo` mode via `BOOTH_MOCK_DATA=1`.
 
 **Live event detection** (`main.py: detect_events()`): compares consecutive scoreboard snapshots and emits events for quarter changes, scoring runs (≥7-point swing), crunch time (Q4/OT within 5), or a generic update. First poll always fires one event per live game.
 
@@ -54,7 +54,7 @@ main.py                      FastAPI server + live polling loop
 
 ```
 ANTHROPIC_API_KEY   required
-ODDS_API_KEY        optional — betting agent uses realistic mock data without it
+ODDS_API_KEY        needed for live betting data (demo mode uses mock odds)
 CLAUDE_MODEL        optional — defaults to claude-sonnet-4-6
 ```
 

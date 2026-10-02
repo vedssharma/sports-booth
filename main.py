@@ -466,6 +466,9 @@ def main() -> None:
         return
 
     args = _parse_args()
+    if args.demo:
+        # Mock tool data is only allowed in demo mode; live mode reports "unavailable" instead.
+        os.environ["BOOTH_MOCK_DATA"] = "1"
 
     print("🏀 Sports Booth starting…")
     print(f"   Model:    {os.getenv('CLAUDE_MODEL', 'claude-sonnet-4-6')}")

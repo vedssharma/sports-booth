@@ -6,6 +6,8 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from _common import mock_enabled, unavailable
+
 DB_PATH = str(Path(__file__).parent.parent / "rag" / "chroma_db")
 COLLECTION_NAME = "nba_history"
 EMBED_MODEL = "all-MiniLM-L6-v2"
@@ -45,6 +47,8 @@ def search_historical_games(query: str, n_results: int = 3) -> str:
         collection, embedder = _get_store()
         count = collection.count()
         if count == 0:
+            if not mock_enabled():
+                return unavailable("Historical database", "empty — run 'uv run python rag/seed.py'")
             return (
                 "Historical database is empty. "
                 "Run 'uv run python rag/seed.py' to populate it.\n"
@@ -59,6 +63,8 @@ def search_historical_games(query: str, n_results: int = 3) -> str:
         facts = _format_results(results)
         return json.dumps(facts, indent=2)
     except Exception as e:
+        if not mock_enabled():
+            return unavailable("Historical database", str(e))
         return json.dumps({
             "note": f"RAG error ({e}), returning mock historical fact",
             "facts": [
@@ -80,10 +86,7 @@ def get_player_history(player_name: str) -> str:
         collection, embedder = _get_store()
         count = collection.count()
         if count == 0:
-            return (
-                "Historical database is empty. "
-                "Run 'uv run python rag/seed.py' to populate it."
-            )
+            return unavailable("Historical database", "empty — run 'uv run python rag/seed.py'")
         query = f"{player_name} career records history milestones achievements"
         embedding = embedder.encode(query).tolist()
         results = collection.query(
@@ -93,6 +96,8 @@ def get_player_history(player_name: str) -> str:
         facts = _format_results(results)
         return json.dumps({"player": player_name, "historical_facts": facts}, indent=2)
     except Exception as e:
+        if not mock_enabled():
+            return unavailable("Historical database", str(e))
         return json.dumps({
             "note": f"Player history error ({e}), returning mock",
             "player": player_name,
@@ -113,7 +118,7 @@ def search_team_history(team_name: str, context: str = "") -> str:
         collection, embedder = _get_store()
         count = collection.count()
         if count == 0:
-            return "Historical database empty. Run 'uv run python rag/seed.py' first."
+            return unavailable("Historical database", "empty — run 'uv run python rag/seed.py'")
         query = f"{team_name} {context} history records franchise".strip()
         embedding = embedder.encode(query).tolist()
         results = collection.query(
@@ -123,6 +128,8 @@ def search_team_history(team_name: str, context: str = "") -> str:
         facts = _format_results(results)
         return json.dumps({"team": team_name, "historical_facts": facts}, indent=2)
     except Exception as e:
+        if not mock_enabled():
+            return unavailable("Historical database", str(e))
         return json.dumps({
             "note": f"Team history error ({e}), returning mock",
             "team": team_name,

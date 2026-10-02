@@ -4,6 +4,8 @@ import json
 import os
 from mcp.server.fastmcp import FastMCP
 
+from _common import mock_enabled, unavailable
+
 mcp = FastMCP("betting-lines")
 
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
@@ -33,6 +35,8 @@ def _api_key() -> str | None:
 def get_live_odds() -> str:
     """Get current NBA game odds: point spread, totals, and moneyline from The Odds API."""
     key = _api_key()
+    if not key and not mock_enabled():
+        return unavailable("Betting odds", "ODDS_API_KEY is not set")
     if not key:
         return json.dumps({
             "note": "No ODDS_API_KEY set — using mock data. Set it in .env to get live lines.",
@@ -77,6 +81,8 @@ def get_live_odds() -> str:
                 })
             return json.dumps(slim, indent=2)
     except Exception as e:
+        if not mock_enabled():
+            return unavailable("Betting odds", str(e))
         return json.dumps({
             "note": f"Odds API error ({e}), returning mock",
             "games": _MOCK_GAMES,
@@ -87,6 +93,8 @@ def get_live_odds() -> str:
 def get_line_movement(game_description: str) -> str:
     """Analyze line movement and flag market overreactions for a specific game."""
     key = _api_key()
+    if not mock_enabled():
+        return unavailable("Line movement", "no opening-odds snapshot tracking yet")
     if not key:
         # Return a contextual mock based on the game description
         return json.dumps({
@@ -119,6 +127,8 @@ def get_line_movement(game_description: str) -> str:
 @mcp.tool()
 def get_betting_context(event_description: str) -> str:
     """Given a game event description, return relevant betting context and sharp-money signals."""
+    if not mock_enabled():
+        return unavailable("Betting context", "no real sharp-money feed is wired up")
     return json.dumps({
         "event": event_description,
         "context": {

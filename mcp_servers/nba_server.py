@@ -3,6 +3,8 @@
 import json
 from mcp.server.fastmcp import FastMCP
 
+from _common import mock_enabled, unavailable
+
 mcp = FastMCP("nba-stats")
 
 
@@ -31,6 +33,8 @@ def get_live_scoreboard() -> str:
             })
         return json.dumps(trimmed, indent=2)
     except Exception as e:
+        if not mock_enabled():
+            return unavailable("NBA scoreboard", str(e))
         return json.dumps({
             "note": f"Live data unavailable ({e}), returning mock game",
             "games": [{
@@ -64,6 +68,8 @@ def get_boxscore(game_id: str) -> str:
         ].to_dict(orient="records")
         return json.dumps({"home": home, "away": away, "topPlayers": top_players}, indent=2)
     except Exception as e:
+        if not mock_enabled():
+            return unavailable("NBA boxscore", str(e))
         return json.dumps({
             "note": f"Boxscore unavailable ({e}), returning mock data",
             "home": {
@@ -110,6 +116,8 @@ def get_player_game_stats(game_id: str, player_name: str) -> str:
             return f"Player '{player_name}' not found in game {game_id}."
         return player_df.to_json(orient="records", indent=2)
     except Exception as e:
+        if not mock_enabled():
+            return unavailable("NBA player", str(e))
         return json.dumps({
             "note": f"Player data unavailable ({e}), returning mock",
             "player": player_name,
@@ -140,6 +148,8 @@ def get_team_lineup_impact(game_id: str, team_tricode: str) -> str:
             "starters": starters["playerName"].tolist() if "playerName" in starters else [],
         }, indent=2)
     except Exception as e:
+        if not mock_enabled():
+            return unavailable("NBA lineup", str(e))
         return json.dumps({
             "note": f"Lineup data unavailable ({e}), returning mock",
             "team": team_tricode,

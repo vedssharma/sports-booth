@@ -77,11 +77,24 @@ Option B — spread movement if the line shifted:
 Pick whichever chart better illustrates your point. Omit if no odds data was retrieved.
 """
 
+# Appended to every persona: never paper over a failed tool call with made-up numbers.
+DATA_INTEGRITY_RULES = """
+Data integrity: only cite numbers and facts that came from your tool results or the event
+itself. If a tool returns an "error" / "data unavailable" result, say so briefly in character
+(e.g. "no line data on my screen right now") and omit the [CHART] block. Never invent stats,
+records or odds, and treat the example lines above as style guides, not facts.
+"""
+ANALYST_PROMPT += DATA_INTEGRITY_RULES
+HISTORIAN_PROMPT += DATA_INTEGRITY_RULES
+DEGENERATE_PROMPT += DATA_INTEGRITY_RULES
+
 # ── MCP server config helpers ─────────────────────────────────────────────────
 
 def _mcp_config(server_script: str) -> dict:
     script_path = str(ROOT / "mcp_servers" / server_script)
-    return {"type": "stdio", "command": sys.executable, "args": [script_path]}
+    # Pass the mock flag explicitly: MCP clients don't always forward the full parent env.
+    env = {k: os.environ[k] for k in ("BOOTH_MOCK_DATA", "ODDS_API_KEY") if k in os.environ}
+    return {"type": "stdio", "command": sys.executable, "args": [script_path], "env": env}
 
 
 # ── Individual agent runners ──────────────────────────────────────────────────
