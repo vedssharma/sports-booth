@@ -8,3 +8,6 @@ wheels/
 .venv/
 rag/chroma_db/
 .DS_Store
+
+# Odds snapshot store
+data/

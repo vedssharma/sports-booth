@@ -85,7 +85,7 @@ booth/orchestrator.py     Runs the three agents in parallel via Claude Agent SDK
 mcp_servers/
   nba_server.py           Live scores, live boxscores, play-by-play (nba_api)
   rag_server.py           Semantic search over historical games (ChromaDB)
-  betting_server.py       Live odds and line movement (The Odds API)
+  betting_server.py       Consensus odds + real line movement (The Odds API, snapshots in data/odds.db)
 rag/seed.py               Populates the ChromaDB historical database
 static/index.html         Web dashboard — vanilla JS, no build step
 ```

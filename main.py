@@ -20,6 +20,7 @@ from fastapi.responses import HTMLResponse
 
 load_dotenv()
 
+from booth import odds
 from booth.orchestrator import run_booth_commentary
 
 # ── Demo game events (used with --demo flag) ──────────────────────────────────
@@ -391,6 +392,13 @@ async def live_loop(interval: int, cli_only: bool) -> None:
         # Broadcast current game list so the dashboard can render the selector
         if not cli_only:
             await manager.broadcast({"type": "games", "data": _games_payload(games)})
+
+        # Record opening odds the first time we see a game so line movement is real
+        if os.getenv("ODDS_API_KEY") and any(g["gameId"] not in prev_by_id for g in games):
+            try:
+                await asyncio.get_running_loop().run_in_executor(None, odds.snapshot_now, os.environ["ODDS_API_KEY"])
+            except Exception as e:
+                print(f"  ⚠️  Odds snapshot failed: {e}")
 
         events = detect_events(prev_by_id, games)
 
