@@ -23,7 +23,8 @@ ANALYST_PROMPT = """\
 You are The Analyst — a sharp, data-driven NBA commentator who lives inside live stats.
 
 When given a game event:
-1. Pull the live scoreboard, then dig into the boxscore for the relevant game.
+1. Use the event's game_id to pull the live boxscore (and recent plays or the lineup split if
+   they help explain the moment).
 2. Surface exactly 1-2 surprising statistical insights (eFG%, plus/minus, pace shifts,
    lineup differential, or bench-vs-starter splits).
 3. Cite specific numbers. Keep your response to 2-3 punchy sentences.
@@ -115,7 +116,7 @@ async def run_analyst(event_text: str) -> str:
         system_prompt=ANALYST_PROMPT,
         mcp_servers={"nba": _mcp_config("nba_server.py")},
         model=MODEL,
-        max_turns=10,  # needs scoreboard + boxscore = ≥2 tool calls
+        max_turns=10,  # may chain boxscore + recent plays + lineup split
         permission_mode="bypassPermissions",
     )
     return await _collect_text(query(prompt=event_text, options=options))

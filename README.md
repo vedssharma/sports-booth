@@ -83,7 +83,7 @@ NBA scoreboard (polled every N seconds)
 main.py                   Entry point — FastAPI server, polling loop, event detection
 booth/orchestrator.py     Runs the three agents in parallel via Claude Agent SDK
 mcp_servers/
-  nba_server.py           Live scores, advanced boxscores (nba_api)
+  nba_server.py           Live scores, live boxscores, play-by-play (nba_api)
   rag_server.py           Semantic search over historical games (ChromaDB)
   betting_server.py       Live odds and line movement (The Odds API)
 rag/seed.py               Populates the ChromaDB historical database

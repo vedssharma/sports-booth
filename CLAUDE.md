@@ -31,7 +31,7 @@ uv run python main.py --interval 30
 ```
 main.py                      FastAPI server + live polling loop
   └── booth/orchestrator.py  asyncio.gather() of three parallel query() calls
-        ├── run_analyst()     → mcp_servers/nba_server.py    (nba_api live stats)
+        ├── run_analyst()     → mcp_servers/nba_server.py    (nba_api live endpoints)
         ├── run_historian()   → mcp_servers/rag_server.py    (ChromaDB RAG)
         └── run_degenerate()  → mcp_servers/betting_server.py (The Odds API)
 ```
@@ -63,5 +63,5 @@ Copy `.env.example` → `.env`.
 ## Key constraints
 
 - `permission_mode="bypassPermissions"` is intentional — MCP servers only make outbound read-only API calls, never touch the filesystem.
-- The Analyst agent uses `max_turns=10` (vs 6 for others) because it makes at least two sequential tool calls: scoreboard then boxscore.
+- The Analyst agent uses `max_turns=10` (vs 6 for others) because it may chain several tool calls (boxscore, recent plays, lineup split).
 - `rag/seed.py` uses `collection.get()["ids"]` (not `["metadatas"]`) to check for existing records — ChromaDB stores IDs and metadata separately.
