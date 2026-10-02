@@ -1,4 +1,7 @@
 """Turns a detected game event into broadcast commentary."""
+import uuid
+
+from booth import log, metrics
 from booth.budget import BudgetGuard
 from booth.history import history
 from booth.orchestrator import CONTEXT_MOMENTS, run_booth_commentary
@@ -9,34 +12,42 @@ from booth.server import manager
 
 budget = BudgetGuard()
 policy = CommentaryPolicy(budget)
+logger = log.get("pipeline")
 
 _ROLE_ICONS = {"analyst": "📊 ANALYST:   ", "historian": "📚 HISTORIAN: ", "degenerate": "🎲 DEGENERATE:"}
 
 
 async def process_event(event: dict, cli_only: bool = False) -> None:
+    event_id = uuid.uuid4().hex[:8]
+    with log.bind(event_id=event_id, game_id=event.get("game_id"), event_type=event.get("type")):
+        await _process(event, cli_only)
+
+
+async def _process(event: dict, cli_only: bool) -> None:
     label = event.get("event", event.get("type", "event"))
-    print(f"\n{'─'*60}")
-    print(f"  {label}")
-    print(f"  {event.get('game', '')}  |  Q{event.get('quarter', '')} {event.get('time_remaining', '')}  |  {event.get('score', '')}")
+    logger.info(label, extra={"game": event.get("game"), "quarter": event.get("quarter"),
+                              "clock": event.get("time_remaining")})
 
     decision = policy.decide(event)
     change = budget.transition()
-    if change and not cli_only:
+    if change:
+        logger.warning("budget state changed", extra={"from_state": change[0], "to_state": change[1],
+                                                      **budget.snapshot()})
         notice = {"saver": "Hourly budget nearly used — switching to cheaper, sparser commentary.",
                   "exhausted": "Hourly budget reached — commentary paused except final scores."}.get(change[1])
-        if notice:
+        if notice and not cli_only:
             await manager.broadcast({"type": "status", "message": notice})
-    if change:
-        print(f"  💰 Budget state: {change[0]} → {change[1]}  {budget.snapshot()}")
     if decision is None:
-        print("  ⏭  Skipped (budget)")
+        metrics.registry.inc("events_skipped_budget_total", type=event.get("type", "unknown"))
+        logger.info("event skipped by budget guard")
         return
 
     if not cli_only:
         # `agents` tells the dashboard which columns to show "thinking" in
         await manager.broadcast({"type": "event", "data": {**event, "agents": list(decision.agents)}})
 
-    print(f"  Fetching booth commentary: {', '.join(decision.agents)} on {decision.model} ({decision.reason})…")
+    logger.info("generating commentary", extra={"agents": ",".join(decision.agents), "model": decision.model,
+                                                 "reason": decision.reason})
     earlier = history.recent_for_game(event.get("game_id", ""), CONTEXT_MOMENTS)
     relay = None if cli_only else StreamRelay(manager, event.get("game_id", ""))
     try:
@@ -46,10 +57,13 @@ async def process_event(event: dict, cli_only: bool = False) -> None:
         if relay:
             await relay.close()
     budget.record(commentary["cost_usd"])
+    logger.info("commentary ready", extra={"cost_usd": commentary["cost_usd"], "model": decision.model,
+                                           "spent_last_hour_usd": budget.snapshot()["spent_last_hour_usd"]})
 
-    for role in decision.agents:
-        print(f"\n  {_ROLE_ICONS[role]} {commentary[role][:200]}")
-    print(f"\n  💰 ${commentary['cost_usd']:.4f} this event | {budget.snapshot()}")
+    if cli_only:   # the console *is* the product in --cli mode
+        print(f"\n{'─'*60}\n  {label}")
+        for role in decision.agents:
+            print(f"\n  {_ROLE_ICONS[role]} {commentary[role][:200]}")
 
     history.add(commentary)  # before broadcasting, so a snapshot never misses a sent item
     if not cli_only:

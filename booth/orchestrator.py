@@ -10,14 +10,17 @@ import sys
 from pathlib import Path
 
 from claude_agent_sdk import (
-    AssistantMessage, ClaudeAgentOptions, ResultMessage, StreamEvent, TextBlock, ToolUseBlock, query,
+    AssistantMessage, ClaudeAgentOptions, ResultMessage, StreamEvent, TextBlock, ToolResultBlock,
+    ToolUseBlock, UserMessage, query,
 )
 try:
     from claude_agent_sdk import CLINotFoundError, ProcessError as AgentProcessError
 except ImportError:
     CLINotFoundError = AgentProcessError = Exception  # type: ignore[assignment,misc]
 
-from booth import config  # noqa: E402
+from booth import config, log, metrics  # noqa: E402
+
+logger = log.get("orchestrator")
 
 ROOT = Path(__file__).parent.parent
 # Big moments (runs, crunch time, finals) use MODEL; routine events use the cheaper FAST_MODEL
@@ -139,6 +142,13 @@ ALL_AGENTS = tuple(AGENTS)
 MAX_USD_PER_AGENT = config.get().max_usd_per_agent
 
 
+def _result_text(content) -> str:
+    """Flatten a ToolResultBlock's content (a string or a list of text blocks) for inspection."""
+    if isinstance(content, str):
+        return content
+    return " ".join(c.get("text", "") for c in (content or []) if isinstance(c, dict))
+
+
 async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
     """Drain an async message iterator; return (commentary text, reported cost in USD).
 
@@ -148,10 +158,12 @@ async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
     hit), fall back to all text rather than return nothing.
 
     `on_stream(role, kind, text)` receives live "delta" chunks and "reset" notices.
+    Also records tool-call, "data unavailable" and token metrics for the persona.
     """
     final_parts: list[str] = []
     all_parts: list[str] = []
     cost = 0.0
+    tool_names: dict[str, str] = {}      # tool_use_id -> tool name, to attribute results
     async for msg in aiter:
         if isinstance(msg, StreamEvent):
             ev = msg.event or {}
@@ -164,10 +176,27 @@ async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
         elif isinstance(msg, AssistantMessage):
             texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
             all_parts.extend(texts)
-            if not any(isinstance(b, ToolUseBlock) for b in msg.content):
+            tool_uses = [b for b in msg.content if isinstance(b, ToolUseBlock)]
+            for b in tool_uses:
+                tool_names[b.id] = b.name
+                metrics.registry.inc("agent_tool_calls_total", persona=role, tool=b.name)
+            if not tool_uses:
                 final_parts.extend(texts)
+        elif isinstance(msg, UserMessage) and isinstance(msg.content, list):
+            for b in msg.content:
+                if isinstance(b, ToolResultBlock) and (
+                        b.is_error or "data unavailable" in _result_text(b.content)):
+                    tool = tool_names.get(b.tool_use_id, "unknown")
+                    metrics.registry.inc("agent_tool_unavailable_total", persona=role, tool=tool)
+                    logger.warning("tool reported no data", extra={"persona": role, "tool": tool})
         elif isinstance(msg, ResultMessage):
             cost = msg.total_cost_usd or 0.0
+            usage = msg.usage or {}
+            for kind, key in (("input", "input_tokens"), ("output", "output_tokens"),
+                              ("cache_read", "cache_read_input_tokens"),
+                              ("cache_creation", "cache_creation_input_tokens")):
+                if usage.get(key):
+                    metrics.registry.inc("agent_tokens_total", usage[key], persona=role, kind=kind)
     return "".join(final_parts or all_parts).strip(), cost
 
 
@@ -182,7 +211,20 @@ async def _run_agent(role: str, event_text: str, model: str, on_stream=None) -> 
         include_partial_messages=on_stream is not None,
         permission_mode="bypassPermissions",
     )
-    return await _collect(query(prompt=event_text, options=options), role, on_stream)
+    timer = metrics.Timer()
+    try:
+        with timer:     # the timer stops before the except block runs, so `seconds` is set there
+            text, cost = await _collect(query(prompt=event_text, options=options), role, on_stream)
+    except Exception:
+        metrics.registry.inc("agent_runs_total", persona=role, model=model, outcome="error")
+        metrics.registry.observe("agent_run_seconds", timer.seconds, persona=role)
+        raise
+    metrics.registry.inc("agent_runs_total", persona=role, model=model, outcome="ok")
+    metrics.registry.observe("agent_run_seconds", timer.seconds, persona=role)
+    metrics.registry.inc("agent_cost_usd_total", cost, persona=role, model=model)
+    logger.info("agent finished", extra={"persona": role, "model": model, "seconds": round(timer.seconds, 2),
+                                         "cost_usd": round(cost, 4)})
+    return text, cost
 
 
 # ── Booth continuity ──────────────────────────────────────────────────────────
@@ -246,6 +288,7 @@ async def run_booth_commentary(event: dict, model: str | None = None,
     for role, result in zip(agents, results):
         if isinstance(result, Exception):
             out[role] = _describe_error(result)
+            logger.error("agent failed", extra={"persona": role, "error": str(result)[:200]})
         else:
             text, cost = result
             out[role] = text or AGENTS[role]["fallback"]

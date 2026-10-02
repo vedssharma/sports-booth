@@ -5,7 +5,8 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from booth import config
+from booth import config, metrics
+from booth.health import runtime
 from booth.history import history
 from booth.security import COOKIE_NAME, SECURITY_HEADERS, Auth
 
@@ -125,10 +126,25 @@ async def healthz() -> dict:
     return {"status": "ok"}
 
 
+def _refresh_gauges() -> dict:
+    """Gauges that are cheapest to compute at scrape time. Returns the budget snapshot."""
+    from booth.pipeline import budget  # local import: pipeline imports this module
+    snap = budget.snapshot()
+    metrics.registry.set("websocket_clients", manager.count)
+    metrics.registry.set("budget_spent_usd", snap["spent_last_hour_usd"])
+    metrics.registry.set("budget_cap_usd", snap["cap_usd_per_hour"] or 0)
+    return snap
+
+
 @app.get("/health", dependencies=[Depends(require_auth)])
 async def health() -> dict:
     scheduler = getattr(app.state, "scheduler", None)
-    from booth.pipeline import budget  # local import: pipeline imports this module
-    return {"status": "ok", "clients": manager.count,
-            "scheduler": scheduler.snapshot() if scheduler else None,
-            "budget": budget.snapshot()}
+    budget_snap = _refresh_gauges()
+    return runtime.report(clients=manager.count, scheduler=scheduler.snapshot() if scheduler else None,
+                          budget=budget_snap)
+
+
+@app.get("/metrics", dependencies=[Depends(require_auth)])
+async def prometheus_metrics() -> Response:
+    _refresh_gauges()
+    return Response(metrics.registry.render_prometheus(), media_type="text/plain; version=0.0.4; charset=utf-8")

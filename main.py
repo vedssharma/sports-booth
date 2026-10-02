@@ -19,7 +19,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from booth import config  # noqa: E402  (booth modules read settings at import: load .env first)
+from booth import config, log  # noqa: E402  (booth modules read settings at import: load .env first)
+
+logger = log.get("main")
+
+
+def runtime_version() -> str:
+    from booth.health import runtime
+    return runtime.version
 
 
 def _parse_args(settings: config.Settings) -> argparse.Namespace:
@@ -43,14 +50,18 @@ async def _run(interval: int, cli_only: bool, demo: bool, host: str, port: int, 
     from booth.mcp_host import McpHost
     from booth.orchestrator import use_http_servers
 
+    from booth.health import runtime
+
     mcp = None
+    runtime.mcp_transport = "stdio"
     if not stdio_mcp:
         mcp = McpHost()
-        print("  Starting MCP servers…")
+        logger.info("starting MCP servers")
         if await mcp.start():
             use_http_servers(mcp.urls)
+            runtime.mcp_transport = "http"
         else:
-            print("  ⚠️  Falling back to per-query stdio MCP servers")
+            logger.warning("falling back to per-query stdio MCP servers")
             mcp = None
 
     try:
@@ -62,10 +73,13 @@ async def _run(interval: int, cli_only: bool, demo: bool, host: str, port: int, 
 
 async def _serve(interval: int, cli_only: bool, demo: bool, host: str, port: int) -> None:
     from booth.demo import demo_loop
+    from booth.health import runtime
     from booth.live import live_loop
     from booth.pipeline import process_event
     from booth.scheduler import EventScheduler
     from booth.server import app
+
+    runtime.mode = ("cli-" if cli_only else "") + ("demo" if demo else "live")
 
     if demo:
         # Demo plays its scripted events in order, waiting for each — no scheduler needed
@@ -87,7 +101,7 @@ async def _serve(interval: int, cli_only: bool, demo: bool, host: str, port: int
 
     async def _start_loop() -> None:
         await asyncio.sleep(1)  # let server bind
-        print(f"  Dashboard: http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}")
+        logger.info("dashboard ready", extra={"url": f"http://{'localhost' if host in ('127.0.0.1', '0.0.0.0') else host}:{port}"})
         await loop_fn()
 
     await asyncio.gather(server.serve(), _start_loop())
@@ -128,8 +142,9 @@ def main() -> None:
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
         sys.exit(2)
+    log.setup_logging(settings.log_level, settings.log_format)
     for w in warnings:
-        print(f"⚠️  {w}", file=sys.stderr)
+        logger.warning(w)
 
     from booth.history import history
     from booth.orchestrator import FAST_MODEL, MODEL
@@ -138,12 +153,11 @@ def main() -> None:
     if args.demo:
         history.use_memory()
 
-    print("🏀 Sports Booth starting…")
-    print(f"   Models:   {MODEL} (big moments), {FAST_MODEL} (routine)")
-    print(f"   Budget:   {'unlimited' if not budget.cap else f'${budget.cap:g}/hour'} (BOOTH_BUDGET_USD_PER_HOUR)")
-    print(f"   Interval: {args.interval}s")
-    if args.demo:
-        print("   ⚠️  Demo mode — using hardcoded Lakers vs Celtics events")
+    logger.info("Sports Booth starting", extra={
+        "version": runtime_version(), "model": MODEL, "fast_model": FAST_MODEL,
+        "budget_usd_per_hour": budget.cap or "unlimited", "poll_interval_s": args.interval,
+        "host": args.host, "port": args.port, "auth": "token" if settings.auth_token else "none",
+        "demo": args.demo})
 
     asyncio.run(_run(args.interval, args.cli, args.demo, args.host, args.port, args.stdio_mcp))
 

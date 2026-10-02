@@ -1,8 +1,12 @@
 """Hardcoded Lakers vs Celtics game for --demo mode (no live games or NBA API needed)."""
 import asyncio
 
+from booth import log
+
 from booth.pipeline import process_event
 from booth.server import manager
+
+logger = log.get("demo")
 
 DEMO_EVENTS = [
     {
@@ -67,7 +71,7 @@ DEMO_EVENTS = [
 
 
 async def demo_loop(interval: int, cli_only: bool) -> None:
-    print(f"  Mode: DEMO  |  {len(DEMO_EVENTS)} events, {interval}s apart")
+    logger.info("demo mode", extra={"events": len(DEMO_EVENTS), "interval_s": interval})
     if not cli_only:
         # Send a synthetic games list so the selector renders in demo mode
         demo_games = [{
@@ -85,7 +89,6 @@ async def demo_loop(interval: int, cli_only: bool) -> None:
     for i, event in enumerate(DEMO_EVENTS):
         await process_event(event, cli_only)
         if i < len(DEMO_EVENTS) - 1:
-            print(f"\n  ⏱  Next event in {interval}s…")
+            logger.debug("next demo event", extra={"in_s": interval})
             await asyncio.sleep(interval)
-    print(f"\n{'─'*60}")
-    print("  Demo complete.")
+    logger.info("demo complete")
