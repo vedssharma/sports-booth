@@ -26,9 +26,15 @@ uv run python main.py --interval 30
 # Spawn MCP servers per agent run instead of keeping them running
 uv run python main.py --stdio-mcp
 
-# Tests / lint
+# Validate configuration and show effective settings (secrets masked)
+uv run python main.py --check-config
+
+# Tests / lint (CI runs both)
 uv run pytest
-uv run ruff check --select F .
+uv run ruff check .
+
+# Container
+docker compose up --build
 ```
 
 ## Architecture
@@ -66,6 +72,10 @@ main.py                    args; starts MCP servers (booth/mcp_host.py) then web
 - `commentary` — text per persona that ran (absent personas are omitted, not empty); includes `event`, `model`, `cost_usd`
 - `status` — informational string (e.g. "no live games", budget notices)
 
+**Security** (`booth/security.py`, wired in `booth/server.py`). The server binds `127.0.0.1` by default; `config.check_runtime` refuses any other bind unless `BOOTH_AUTH_TOKEN` is set (or `BOOTH_ALLOW_INSECURE=1`). With a token, `/`, `/ws` and `/health` need it as `Authorization: Bearer` or the `booth_session` cookie (a keyed digest, not the raw token); `/?token=…` trades the token for the HttpOnly/SameSite=Strict cookie and redirects to `/` so it leaves the URL. `/healthz` is unauthenticated liveness for container probes. WebSocket handshakes must be same-origin (or in `BOOTH_ALLOWED_ORIGINS`) even without a token, and unauthorized sockets are accepted-then-closed with code 1008 so the dashboard stops retrying. All responses carry nosniff/frame-deny/no-referrer and a CSP (inline script allowed: the page is one file).
+
+**Observability.** Operational output goes through `logging` (`booth/log.py`): `BOOTH_LOG_LEVEL`, and `BOOTH_LOG_FORMAT=text|json` (one JSON object per line). `process_event` wraps each event in `log.bind(event_id, game_id, event_type)`, and that context follows into the agent tasks, so one `event_id` ties together scheduling, the policy decision, every agent run and the broadcast. Console `print` is reserved for `--cli` commentary, config errors and `--check-config`. Metrics (`booth/metrics.py`) are an in-process registry with every metric declared in `METRICS` (an undeclared name raises, so typos fail in tests): events submitted/dropped(by reason)/processed, queue wait and processing time, agent runs/latency/cost/tokens per persona, tool calls and "data unavailable" results (counted in `orchestrator._collect` from `ToolUseBlock`/`ToolResultBlock`), scoreboard poll outcomes, budget gauges. `/metrics` is Prometheus text; `/health` is JSON from `booth/health.py` (`status` ok/degraded with `reasons`: 3+ consecutive failed polls, no successful poll for max(3×interval, 120s), budget exhausted; plus uptime, scheduler, budget, per-persona agent summary). Both need the auth token when one is set; `/healthz` is the unauthenticated liveness probe. Tests get fresh metrics via an autouse fixture in `tests/conftest.py`.
+
 **Dashboard** (`static/index.html`): pure vanilla JS, no build step. Stores commentary cards in memory keyed by `gameId`, so switching games is instant; history survives reloads via the `snapshot` message. Per-game memory is capped (`MAX_CARDS`/`MAX_TIMELINE`), the WebSocket reconnects with exponential backoff + jitter, and persona visibility/voice live in `localStorage` (`pref`). Voice speaks only *live* commentary for the selected game, never history replay. NBA clocks arrive as ISO durations (`PT05M30.00S`); use `fmtClock` for display. Auto-selects the first game on arrival.
 
 **RAG database** lives at `rag/chroma_db/` (gitignored). Re-seed any time with `uv run python rag/seed.py` (idempotent; `--rebuild` drops first, `--fetch-leaders` adds nba_api all-time leaderboards). Facts come from `rag/seed.py`'s curated list plus `rag/data/*.jsonl`, validated by `rag/facts.py` before anything is written. The RAG server's tools resolve player/team wording to stored metadata (`rag/filters.py`) and pass Chroma `where` filters; unmatched filters are dropped with a note. Tests use an in-process Chroma with a fake hashing embedder (no model download).
@@ -73,18 +83,22 @@ main.py                    args; starts MCP servers (booth/mcp_host.py) then web
 ## Environment
 
 ```
-ANTHROPIC_API_KEY   required
+ANTHROPIC_API_KEY   required (an untouched 'your_..._here' placeholder counts as unset)
 ODDS_API_KEY        needed for live betting data (demo mode uses mock odds)
 CLAUDE_MODEL        optional — big moments; defaults to claude-sonnet-4-6
 CLAUDE_MODEL_FAST   optional — routine events; defaults to claude-haiku-4-5-20251001
 BOOTH_BUDGET_USD_PER_HOUR  optional — default 5, 0 = unlimited
 BOOTH_MAX_USD_PER_AGENT    optional — default 0.50
+BOOTH_HOST/PORT, BOOTH_AUTH_TOKEN, BOOTH_ALLOW_INSECURE, BOOTH_ALLOWED_ORIGINS   network + access control (see Security)
+BOOTH_LOG_LEVEL/FORMAT, BOOTH_HISTORY_DB/ODDS_DB/RAG_DB, BOOTH_ODDS_TTL   optional
 ```
 
-Copy `.env.example` → `.env`.
+All variables are defined, defaulted and validated in `booth/config.py` (add new ones there, not with `os.getenv` in modules). `booth/health.py`'s `runtime` and the metrics registry are process-wide state; tests reset them via an autouse fixture.
+
+Copy `.env.example` → `.env`. The container (`Dockerfile`, `docker/entrypoint.sh`, `docker-compose.yml`) keeps state under `/data`, seeds RAG on first start, and validates config before anything slow.
 
 ## Key constraints
 
-- `permission_mode="bypassPermissions"` is intentional — MCP servers only make outbound read-only API calls, never touch the filesystem.
+- Agents are locked to least privilege in `orchestrator._run_agent`: `tools=[]` (no built-in Bash/Write/WebFetch/…), `allowed_tools=["mcp__<their server>"]`, `permission_mode="dontAsk"`. Do not loosen this: agents read third-party text and a prompt injection must not reach a shell or the filesystem. (Earlier versions used `bypassPermissions` with every built-in tool enabled, which was both a security hole and ~3× the cost.) `tests/test_cost_controls.py` pins it.
 - The Analyst agent uses `max_turns=10` (vs 6 for others) because it may chain several tool calls (boxscore, recent plays, lineup split).
 - `rag/seed.py` uses `collection.get()["ids"]` (not `["metadatas"]`) to check for existing records — ChromaDB stores IDs and metadata separately.

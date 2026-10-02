@@ -9,7 +9,10 @@ import socket
 import sys
 from pathlib import Path
 
+from booth import log
 from booth.orchestrator import SERVER_SCRIPTS
+
+logger = log.get("mcp_host")
 
 ROOT = Path(__file__).parent.parent
 STARTUP_TIMEOUT_S = 30
@@ -51,10 +54,11 @@ class McpHost:
                 sys.executable, str(ROOT / "mcp_servers" / script), "--http", "--port", str(port))
             self._procs.append(proc)
             if not await _wait_for_port(port, proc, STARTUP_TIMEOUT_S):
-                print(f"  ⚠️  MCP server '{name}' failed to start")
+                logger.error("MCP server failed to start", extra={"server": name})
                 await self.stop()
                 return False
             self.urls[name] = f"http://127.0.0.1:{port}/mcp"
+            logger.info("MCP server up", extra={"server": name, "port": port})
         return True
 
     def _kill_all(self) -> None:

@@ -4,19 +4,18 @@ The Odds API client + SQLite snapshot store.
 Shared by the betting MCP server (tools) and main.py (records a snapshot the first time a game is
 seen, so "opening" lines and line movement are real). Snapshots live in data/odds.db.
 """
-import os
 import sqlite3
 import statistics
 import threading
 import time
-from pathlib import Path
 
 import httpx
 
-ROOT = Path(__file__).parent.parent
+from booth import config
+
 ODDS_API_BASE = "https://api.the-odds-api.com/v4"
 SPORT = "basketball_nba"
-DB_PATH = Path(os.getenv("BOOTH_ODDS_DB", ROOT / "data" / "odds.db"))
+DB_PATH = config.get().odds_db
 
 TEAM_NAMES = {
     "ATL": "Atlanta Hawks", "BOS": "Boston Celtics", "BKN": "Brooklyn Nets",
@@ -127,7 +126,7 @@ def record_snapshots(events: list[dict], now: float | None = None) -> None:
         )
 
 
-SNAPSHOT_TTL_S = float(os.getenv("BOOTH_ODDS_TTL", "60"))
+SNAPSHOT_TTL_S = config.get().odds_ttl_s
 _last: dict = {"at": float("-inf"), "events": []}
 _last_lock = threading.Lock()
 

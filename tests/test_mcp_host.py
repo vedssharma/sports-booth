@@ -83,3 +83,42 @@ def test_host_reports_failure_and_cleans_up(monkeypatch):
         assert host.urls == {} and host._procs == []
 
     asyncio.run(go())
+
+
+def test_mcp_server_logs_follow_the_booth_format_and_stay_quiet(monkeypatch):
+    """In JSON mode every line a server process writes must be JSON (one broken line breaks log
+    shipping), and the MCP library's per-request INFO chatter must not appear at all."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    root = Path(__file__).parent.parent
+    env = {**os.environ, "BOOTH_LOG_FORMAT": "json", "BOOTH_MOCK_DATA": "1"}
+    env.pop("BOOTH_LOG_LEVEL", None)
+    proc = subprocess.Popen([sys.executable, "mcp_servers/betting_server.py", "--http", "--port", "8151"],
+                            cwd=root, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+
+    async def exercise():
+        for _ in range(60):
+            try:
+                async with streamable_http_client("http://127.0.0.1:8151/mcp") as (r, w, _):
+                    async with ClientSession(r, w) as session:
+                        await session.initialize()
+                        await session.list_tools()
+                        await session.call_tool("get_live_odds", {})
+                        return
+            except Exception:
+                await asyncio.sleep(0.25)
+        raise AssertionError("server never came up")
+
+    try:
+        asyncio.run(exercise())
+    finally:
+        proc.terminate()
+        _, err = proc.communicate(timeout=15)
+    lines = [line for line in err.splitlines() if line.strip()]
+    for line in lines:
+        json.loads(line)            # raises on any non-JSON line
+    assert not any("Processing request" in line for line in lines)

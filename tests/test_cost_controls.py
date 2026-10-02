@@ -237,3 +237,18 @@ def test_history_recent_for_game_is_ordered_and_scoped():
     store.add({"event": {"game_id": "B", "event": "b0"}})
     assert [m["event"]["event"] for m in store.recent_for_game("A", 3)] == ["a2", "a3", "a4"]
     assert store.recent_for_game("none") == []
+
+
+# ── Least privilege ───────────────────────────────────────────────────────────
+
+def test_agents_get_only_their_own_mcp_server_and_nothing_is_auto_approved(monkeypatch):
+    calls = []
+    monkeypatch.setattr(orchestrator, "query", fake_query(calls))
+    asyncio.run(orchestrator.run_booth_commentary({"type": "scoring_run"}))
+    by_server = {next(iter(c.mcp_servers)): c for c in calls}
+    assert set(by_server) == {"nba", "rag", "betting"}
+    for server, opts in by_server.items():
+        assert opts.tools == []                                   # no built-in tools (Bash, Write, …)
+        assert opts.allowed_tools == [f"mcp__{server}"]           # only its own MCP server
+        assert opts.permission_mode == "dontAsk"                  # anything else is denied, not approved
+        assert list(opts.mcp_servers) == [server]                 # and no other MCP server is attached

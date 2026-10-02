@@ -6,16 +6,20 @@ Run once before starting the booth:
     uv run python rag/seed.py --fetch-leaders  # also all-time leaderboards from nba_api
     uv run python rag/seed.py --rebuild        # drop and re-create the collection
 """
+import os
 import sys
 from pathlib import Path
 
-import chromadb
-from sentence_transformers import SentenceTransformer
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")  # no implicit usage telemetry from ChromaDB
+
+import chromadb  # noqa: E402
+from sentence_transformers import SentenceTransformer  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).parent.parent))  # `uv run python rag/seed.py` has rag/ on the path, not the repo root
+from booth import config  # noqa: E402
 from rag.facts import fetch_all_time_leaders, load_data_dir, merge_facts, validate_fact  # noqa: E402
 
-DB_PATH = str(Path(__file__).parent / "chroma_db")
+DB_PATH = str(config.get().rag_db)
 COLLECTION_NAME = "nba_history"
 EMBED_MODEL = "all-MiniLM-L6-v2"
 

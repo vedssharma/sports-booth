@@ -1,11 +1,12 @@
 """Rolling-window spend tracking so an always-on booth can't quietly run up a bill."""
-import os
 import time
 from collections import deque
 
+from booth import config
+
 WINDOW_S = 3600
 SAVER_FRACTION = 0.75   # at 75% of the hourly cap, switch to cheap-only mode
-DEFAULT_USD_PER_HOUR = float(os.getenv("BOOTH_BUDGET_USD_PER_HOUR", "5"))
+DEFAULT_USD_PER_HOUR = config.get().budget_usd_per_hour
 
 
 class BudgetGuard:

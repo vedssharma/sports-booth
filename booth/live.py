@@ -2,12 +2,15 @@
 import asyncio
 import os
 
-from booth import odds
+from booth import log, odds
 from booth.events import EventDetector, is_final
+from booth.health import runtime
 from booth.players import PlayerWatcher
 from booth.scheduler import EventScheduler
 from booth.server import manager
 from booth.sources import fetch_boxscores, fetch_started_games, games_payload
+
+logger = log.get("live")
 
 
 async def live_loop(interval: int, cli_only: bool, scheduler: EventScheduler) -> None:
@@ -17,15 +20,19 @@ async def live_loop(interval: int, cli_only: bool, scheduler: EventScheduler) ->
     seen_ids: set[str] = set()
     warned_no_games = False
 
-    print(f"  Mode: LIVE  |  Polling every {interval}s")
+    runtime.poll_interval_s = interval
+    logger.info("live mode", extra={"poll_interval_s": interval})
 
     while True:
         try:
             started = await fetch_started_games()
         except Exception as e:
-            print(f"  ⚠️  Scoreboard fetch error: {e}. Retrying in {interval}s…")
+            runtime.poll_failed()
+            logger.warning("scoreboard fetch failed", extra={"error": str(e)[:200], "retry_in_s": interval,
+                                                              "consecutive": runtime.consecutive_poll_failures})
             await asyncio.sleep(interval)
             continue
+        runtime.poll_ok()
 
         live = [g for g in started if not is_final(g)]
 
@@ -42,7 +49,7 @@ async def live_loop(interval: int, cli_only: bool, scheduler: EventScheduler) ->
                     await asyncio.get_running_loop().run_in_executor(
                         None, odds.snapshot_now, os.environ["ODDS_API_KEY"])
                 except Exception as e:
-                    print(f"  ⚠️  Odds snapshot failed: {e}")
+                    logger.warning("odds snapshot failed", extra={"error": str(e)[:200]})
             seen_ids |= new_ids
 
         # Includes games that just went final, so the detector can announce them once
@@ -62,10 +69,10 @@ async def live_loop(interval: int, cli_only: bool, scheduler: EventScheduler) ->
 
         if not live and not warned_no_games:
             msg = "No live NBA games right now. Booth will activate automatically when games start."
-            print(f"\n  ⏸  {msg}")
+            logger.info("no live games")
             if not cli_only:
                 await manager.broadcast({"type": "status", "message": msg})
             warned_no_games = True
 
-        print(f"\n  ⏱  Next poll in {interval}s…")
+        logger.debug("polled", extra={"started": len(started), "live": len(live), "events": len(events)})
         await asyncio.sleep(interval)

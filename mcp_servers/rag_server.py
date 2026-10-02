@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
 """Historical NBA RAG MCP server — ChromaDB + sentence-transformers for semantic search."""
 import json
-import sys
+import logging
+import os
 import threading
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from _common import mock_enabled, offload, serve, unavailable
+from booth import config
 from rag.filters import build_where, match_players, match_teams
 
-DB_PATH = str(Path(__file__).parent.parent / "rag" / "chroma_db")
+DB_PATH = str(config.get().rag_db)
 COLLECTION_NAME = "nba_history"
 EMBED_MODEL = "all-MiniLM-L6-v2"
+
+# ChromaDB phones home with anonymous usage telemetry by default; a booth shouldn't do that implicitly.
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 mcp = FastMCP("nba-rag")
 
@@ -184,7 +188,7 @@ def _warmup() -> None:
     try:
         _get_store()
     except Exception as e:  # tools will report the same error to the agent
-        print(f"RAG warmup failed: {e}", file=sys.stderr)
+        logging.getLogger("booth.rag").warning("RAG warmup failed: %s", e)
 
 
 if __name__ == "__main__":

@@ -14,6 +14,10 @@ import time
 from collections import deque
 from typing import Awaitable, Callable
 
+from booth import log, metrics
+
+logger = log.get("scheduler")
+
 # Higher = more important. Priority-3 events are never dropped or expired.
 PRIORITY = {"game_final": 3, "quarter_start": 2, "scoring_run": 2, "close_game": 2,
             "lead_change": 2, "player_milestone": 2, "foul_trouble": 1, "game_update": 1}
@@ -54,19 +58,21 @@ class EventScheduler:
     def submit(self, event: dict) -> bool:
         """Queue an event without blocking. Returns False if it was dropped on arrival."""
         self.stats["submitted"] += 1
+        metrics.registry.inc("events_submitted_total", type=event.get("type", "unknown"))
         gid = event.get("game_id", "")
         pending = self._pending.setdefault(gid, deque())
 
         # A routine update is pointless while the game is already busy
         if event.get("type") == "game_update" and (pending or gid in self._workers):
-            self.stats["dropped_busy"] += 1
+            self._dropped("busy", event)
             return False
 
         if event.get("type") in SUPERSEDABLE:
-            kept = deque(item for item in pending if item[1].get("type") != event["type"])
-            self.stats["dropped_superseded"] += len(pending) - len(kept)
-            pending.clear()
-            pending.extend(kept)
+            # A fresher event of the same type makes the older pending ones redundant
+            stale = [item for item in pending if item[1].get("type") == event["type"]]
+            for item in stale:
+                pending.remove(item)
+                self._dropped("superseded", item[1])
 
         pending.append((self._clock(), event))
 
@@ -77,7 +83,7 @@ class EventScheduler:
             # lowest priority first, oldest first among equals
             victim = min(droppable, key=lambda item: (priority(item[1]), item[0]))
             pending.remove(victim)
-            self.stats["dropped_overflow"] += 1
+            self._dropped("overflow", victim[1])
             if victim[1] is event:
                 return False
 
@@ -90,6 +96,13 @@ class EventScheduler:
         while self._workers:
             await asyncio.gather(*list(self._workers.values()), return_exceptions=True)
 
+    def _dropped(self, reason: str, event: dict, count_stat: bool = True) -> None:
+        if count_stat:
+            self.stats[f"dropped_{reason}"] += 1
+        metrics.registry.inc("events_dropped_total", reason=reason)
+        logger.info("event dropped", extra={"reason": reason, "event_type": event.get("type"),
+                                            "game_id": event.get("game_id")})
+
     def snapshot(self) -> dict:
         return {**self.stats, "pending": sum(len(p) for p in self._pending.values()),
                 "active_games": len(self._workers)}
@@ -101,17 +114,24 @@ class EventScheduler:
         try:
             while pending:
                 queued_at, event = pending.popleft()
-                if priority(event) < 3 and self._clock() - queued_at > self._stale_after:
-                    self.stats["dropped_stale"] += 1
-                    print(f"  ⏭  Dropped stale event: {event.get('event', event.get('type'))}")
+                waited = self._clock() - queued_at
+                if priority(event) < 3 and waited > self._stale_after:
+                    self._dropped("stale", event)
                     continue
                 async with self._sem:
-                    try:
-                        await self._handler(event)
-                        self.stats["processed"] += 1
-                    except Exception as e:  # never let one bad event kill the game's worker
-                        self.stats["failed"] += 1
-                        print(f"  ⚠️  Event handler failed: {e}")
+                    waited = self._clock() - queued_at          # includes time spent waiting for a slot
+                    metrics.registry.observe("event_queue_wait_seconds", waited)
+                    etype = event.get("type", "unknown")
+                    with metrics.Timer() as t:
+                        try:
+                            await self._handler(event)
+                            self.stats["processed"] += 1
+                            metrics.registry.inc("events_processed_total", type=etype, outcome="ok")
+                        except Exception:  # never let one bad event kill the game's worker
+                            self.stats["failed"] += 1
+                            metrics.registry.inc("events_processed_total", type=etype, outcome="error")
+                            logger.exception("event handler failed", extra={"event_type": etype, "game_id": gid})
+                    metrics.registry.observe("event_process_seconds", t.seconds, type=etype)
         finally:
             self._workers.pop(gid, None)
             if not pending:

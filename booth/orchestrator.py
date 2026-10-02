@@ -10,17 +10,22 @@ import sys
 from pathlib import Path
 
 from claude_agent_sdk import (
-    AssistantMessage, ClaudeAgentOptions, ResultMessage, StreamEvent, TextBlock, ToolUseBlock, query,
+    AssistantMessage, ClaudeAgentOptions, ResultMessage, StreamEvent, TextBlock, ToolResultBlock,
+    ToolUseBlock, UserMessage, query,
 )
 try:
     from claude_agent_sdk import CLINotFoundError, ProcessError as AgentProcessError
 except ImportError:
     CLINotFoundError = AgentProcessError = Exception  # type: ignore[assignment,misc]
 
+from booth import config, log, metrics  # noqa: E402
+
+logger = log.get("orchestrator")
+
 ROOT = Path(__file__).parent.parent
 # Big moments (runs, crunch time, finals) use MODEL; routine events use the cheaper FAST_MODEL
-MODEL = os.getenv("CLAUDE_MODEL", "claude-sonnet-4-6")
-FAST_MODEL = os.getenv("CLAUDE_MODEL_FAST", "claude-haiku-4-5-20251001")
+MODEL = config.get().model
+FAST_MODEL = config.get().fast_model
 
 # ── Agent system prompts ──────────────────────────────────────────────────────
 
@@ -134,7 +139,14 @@ ALL_AGENTS = tuple(AGENTS)
 
 # Hard ceiling on what one agent run may spend (0 disables). A guard against runaway tool loops;
 # the hourly budget in booth/budget.py is the real spending control.
-MAX_USD_PER_AGENT = float(os.getenv("BOOTH_MAX_USD_PER_AGENT", "0.50"))
+MAX_USD_PER_AGENT = config.get().max_usd_per_agent
+
+
+def _result_text(content) -> str:
+    """Flatten a ToolResultBlock's content (a string or a list of text blocks) for inspection."""
+    if isinstance(content, str):
+        return content
+    return " ".join(c.get("text", "") for c in (content or []) if isinstance(c, dict))
 
 
 async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
@@ -146,10 +158,14 @@ async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
     hit), fall back to all text rather than return nothing.
 
     `on_stream(role, kind, text)` receives live "delta" chunks and "reset" notices.
+    Also records tool-call, "data unavailable" and token metrics for the persona.
     """
-    final_parts: list[str] = []
-    all_parts: list[str] = []
+    # The SDK emits one AssistantMessage per content block, all sharing a message_id. Preamble text
+    # ("Let me pull the box score") and its tool_use block therefore arrive as *separate* messages,
+    # so decide per message_id, once everything has arrived, whether a turn used a tool.
+    turns: dict[str, dict] = {}          # message_id -> {"texts": [...], "tool": bool}
     cost = 0.0
+    tool_names: dict[str, str] = {}      # tool_use_id -> tool name, to attribute results
     async for msg in aiter:
         if isinstance(msg, StreamEvent):
             ev = msg.event or {}
@@ -160,12 +176,30 @@ async def _collect(aiter, role: str = "", on_stream=None) -> tuple[str, float]:
                       and ev.get("content_block", {}).get("type") == "tool_use"):
                     on_stream(role, "reset", "")
         elif isinstance(msg, AssistantMessage):
-            texts = [b.text for b in msg.content if isinstance(b, TextBlock)]
-            all_parts.extend(texts)
-            if not any(isinstance(b, ToolUseBlock) for b in msg.content):
-                final_parts.extend(texts)
+            turn = turns.setdefault(msg.message_id or f"anonymous-{len(turns)}", {"texts": [], "tool": False})
+            turn["texts"].extend(b.text for b in msg.content if isinstance(b, TextBlock))
+            for b in msg.content:
+                if isinstance(b, ToolUseBlock):
+                    turn["tool"] = True
+                    tool_names[b.id] = b.name
+                    metrics.registry.inc("agent_tool_calls_total", persona=role, tool=b.name)
+        elif isinstance(msg, UserMessage) and isinstance(msg.content, list):
+            for b in msg.content:
+                if isinstance(b, ToolResultBlock) and (
+                        b.is_error or "data unavailable" in _result_text(b.content)):
+                    tool = tool_names.get(b.tool_use_id, "unknown")
+                    metrics.registry.inc("agent_tool_unavailable_total", persona=role, tool=tool)
+                    logger.warning("tool reported no data", extra={"persona": role, "tool": tool})
         elif isinstance(msg, ResultMessage):
             cost = msg.total_cost_usd or 0.0
+            usage = msg.usage or {}
+            for kind, key in (("input", "input_tokens"), ("output", "output_tokens"),
+                              ("cache_read", "cache_read_input_tokens"),
+                              ("cache_creation", "cache_creation_input_tokens")):
+                if usage.get(key):
+                    metrics.registry.inc("agent_tokens_total", usage[key], persona=role, kind=kind)
+    final_parts = [t for turn in turns.values() if not turn["tool"] for t in turn["texts"]]
+    all_parts = [t for turn in turns.values() for t in turn["texts"]]
     return "".join(final_parts or all_parts).strip(), cost
 
 
@@ -178,9 +212,32 @@ async def _run_agent(role: str, event_text: str, model: str, on_stream=None) -> 
         max_turns=cfg["max_turns"],
         max_budget_usd=MAX_USD_PER_AGENT or None,
         include_partial_messages=on_stream is not None,
-        permission_mode="bypassPermissions",
+        # Least privilege. Agents see tool output from third-party feeds (play descriptions, odds
+        # APIs), so a prompt-injected string must not be able to reach anything but the persona's
+        # own read-only MCP server:
+        #  - tools=[]            removes every built-in tool (Bash, Write, Edit, WebFetch, Agent, …)
+        #  - allowed_tools       pre-approves just this persona's MCP server
+        #  - permission_mode     "dontAsk" denies anything else outright instead of prompting
+        # It also shrinks each run's prompt ~6x (the built-in tool definitions were most of it) and
+        # skips the ToolSearch round trip, so runs are about 3x cheaper and a turn shorter.
+        tools=[],
+        allowed_tools=[f"mcp__{cfg['server']}"],
+        permission_mode="dontAsk",
     )
-    return await _collect(query(prompt=event_text, options=options), role, on_stream)
+    timer = metrics.Timer()
+    try:
+        with timer:     # the timer stops before the except block runs, so `seconds` is set there
+            text, cost = await _collect(query(prompt=event_text, options=options), role, on_stream)
+    except Exception:
+        metrics.registry.inc("agent_runs_total", persona=role, model=model, outcome="error")
+        metrics.registry.observe("agent_run_seconds", timer.seconds, persona=role)
+        raise
+    metrics.registry.inc("agent_runs_total", persona=role, model=model, outcome="ok")
+    metrics.registry.observe("agent_run_seconds", timer.seconds, persona=role)
+    metrics.registry.inc("agent_cost_usd_total", cost, persona=role, model=model)
+    logger.info("agent finished", extra={"persona": role, "model": model, "seconds": round(timer.seconds, 2),
+                                         "cost_usd": round(cost, 4)})
+    return text, cost
 
 
 # ── Booth continuity ──────────────────────────────────────────────────────────
@@ -244,6 +301,7 @@ async def run_booth_commentary(event: dict, model: str | None = None,
     for role, result in zip(agents, results):
         if isinstance(result, Exception):
             out[role] = _describe_error(result)
+            logger.error("agent failed", extra={"persona": role, "error": str(result)[:200]})
         else:
             text, cost = result
             out[role] = text or AGENTS[role]["fallback"]

@@ -3,29 +3,45 @@ Commentary history, persisted to SQLite so it survives restarts and can be repla
 dashboards that connect (or reconnect) mid-game.
 """
 import json
-import os
 import sqlite3
 import threading
 import time
 from pathlib import Path
 
-ROOT = Path(__file__).parent.parent
-DEFAULT_PATH = ROOT / "data" / "history.db"
+from booth import config
+
 KEEP_PER_GAME = 100
 MAX_AGE_S = 24 * 3600
 
 
 class HistoryStore:
+    """SQLite-backed store. The connection is opened lazily on first use so the process can
+    still choose the storage (e.g. `use_memory()` for demo mode) after imports have run."""
+
     def __init__(self, path: str | Path | None = None) -> None:
-        path = str(path or os.getenv("BOOTH_HISTORY_DB") or DEFAULT_PATH)
-        if path != ":memory:":
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
+        self._path = str(path or config.get().history_db)
         self._lock = threading.Lock()
-        self._db = sqlite3.connect(path, check_same_thread=False)
-        self._db.execute("""CREATE TABLE IF NOT EXISTS moments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, game_id TEXT, payload TEXT)""")
-        self._db.execute("CREATE INDEX IF NOT EXISTS idx_moments_game ON moments(game_id, id)")
-        self._db.commit()
+        self._conn: sqlite3.Connection | None = None
+
+    def use_memory(self) -> None:
+        """Switch to an in-memory store (nothing is written to disk). Only valid before first use."""
+        with self._lock:
+            if self._conn is not None:
+                raise RuntimeError("history store already in use")
+            self._path = ":memory:"
+
+    @property
+    def _db(self) -> sqlite3.Connection:
+        if self._conn is None:
+            if self._path != ":memory:":
+                Path(self._path).parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(self._path, check_same_thread=False)
+            conn.execute("""CREATE TABLE IF NOT EXISTS moments (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, game_id TEXT, payload TEXT)""")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_moments_game ON moments(game_id, id)")
+            conn.commit()
+            self._conn = conn
+        return self._conn
 
     def add(self, commentary: dict, now: float | None = None) -> None:
         """Store one commentary payload ({event, analyst, historian, degenerate})."""
@@ -59,4 +75,4 @@ class HistoryStore:
         return [json.loads(r[0]) for r in rows]
 
 
-history = HistoryStore(":memory:" if os.getenv("BOOTH_MOCK_DATA") == "1" else None)
+history = HistoryStore()
