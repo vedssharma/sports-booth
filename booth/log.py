@@ -69,9 +69,10 @@ class TextFormatter(logging.Formatter):
         return line
 
 
-def setup_logging(level: str = "INFO", fmt: str = "text", stream=None) -> None:
-    """Configure the `booth` logger. Safe to call more than once (replaces its handler)."""
-    logger = logging.getLogger("booth")
+def setup_logging(level: str = "INFO", fmt: str = "text", stream=None, root: bool = False) -> None:
+    """Configure the `booth` logger (or, with root=True, the root logger — used by the MCP server
+    processes so their library logs share the booth's format). Safe to call more than once."""
+    logger = logging.getLogger("" if root else "booth")
     for handler in list(logger.handlers):
         logger.removeHandler(handler)
     handler = logging.StreamHandler(stream or sys.stderr)
@@ -79,7 +80,7 @@ def setup_logging(level: str = "INFO", fmt: str = "text", stream=None) -> None:
     handler.addFilter(_ContextFilter())
     logger.addHandler(handler)
     logger.setLevel(level.upper())
-    logger.propagate = False
+    logger.propagate = root
 
 
 def get(name: str) -> logging.Logger:

@@ -67,8 +67,10 @@ async def _run(interval: int, cli_only: bool, demo: bool, host: str, port: int, 
     try:
         await _serve(interval, cli_only, demo, host, port)
     finally:
+        logger.info("shutting down")
         if mcp:
             await mcp.stop()
+        logger.info("stopped")
 
 
 async def _serve(interval: int, cli_only: bool, demo: bool, host: str, port: int) -> None:

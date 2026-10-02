@@ -53,6 +53,16 @@ def serve(mcp, warmup=None) -> None:
     if not args.http:
         mcp.run()
         return
+    # Same log format/level as the main process, and quiet the MCP library's per-request INFO chatter
+    # (it would otherwise interleave rich-formatted text into a JSON log stream).
+    import logging
+
+    from booth import config, log
+    settings = config.get()
+    log.setup_logging(settings.log_level, settings.log_format, root=True)
+    if settings.log_level != "DEBUG":
+        for noisy in ("mcp", "httpx", "httpcore", "uvicorn", "sse_starlette"):
+            logging.getLogger(noisy).setLevel(logging.WARNING)
     if warmup:
         import threading
         threading.Thread(target=warmup, daemon=True).start()
