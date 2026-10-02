@@ -10,7 +10,8 @@ import re
 
 from mcp.server.fastmcp import FastMCP
 
-from _common import mock_enabled, unavailable
+from _common import mock_enabled, offload, serve, unavailable  # noqa: I001 (adds repo root to sys.path)
+from booth.cache import ttl_cache
 
 mcp = FastMCP("nba-stats")
 
@@ -106,20 +107,33 @@ def lineup_split(team: dict) -> dict:
     return out
 
 
+# The server is long-lived and shared, so cache upstream calls briefly: several agents (and
+# several tool calls per agent) ask about the same game within seconds.
+@ttl_cache(10)
 def _fetch_game(game_id: str) -> dict:
     from nba_api.live.nba.endpoints import boxscore
     return boxscore.BoxScore(game_id=game_id).game.get_dict()
 
 
+@ttl_cache(10)
+def _fetch_scoreboard() -> list[dict]:
+    from nba_api.live.nba.endpoints import scoreboard as live_sb
+    return live_sb.ScoreBoard().games.get_dict()
+
+
+@ttl_cache(10)
+def _fetch_actions(game_id: str) -> list[dict]:
+    from nba_api.live.nba.endpoints import playbyplay
+    return playbyplay.PlayByPlay(game_id=game_id).actions.get_dict()
+
+
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
-@mcp.tool()
+@offload(mcp)
 def get_live_scoreboard() -> str:
     """Get today's NBA live scoreboard with all game scores and status."""
     try:
-        from nba_api.live.nba.endpoints import scoreboard as live_sb
-
-        games = live_sb.ScoreBoard().games.get_dict()
+        games = _fetch_scoreboard()
         if not games:
             return json.dumps({"note": "No live NBA games right now.", "games": []})
         return json.dumps([{
@@ -142,7 +156,7 @@ def get_live_scoreboard() -> str:
         }]}, indent=2)
 
 
-@mcp.tool()
+@offload(mcp)
 def get_boxscore(game_id: str) -> str:
     """Get live team and top-player stats for a game (eFG%, TS%, plus/minus, paint/fast-break points)."""
     try:
@@ -166,7 +180,7 @@ def get_boxscore(game_id: str) -> str:
         }, indent=2)
 
 
-@mcp.tool()
+@offload(mcp)
 def get_player_game_stats(game_id: str, player_name: str) -> str:
     """Get detailed live stats for a specific player in a game (partial name match)."""
     try:
@@ -186,7 +200,7 @@ def get_player_game_stats(game_id: str, player_name: str) -> str:
                             "plusMinus": 18, "efgPct": 61.1, "tsPct": 68.4}], indent=2)
 
 
-@mcp.tool()
+@offload(mcp)
 def get_team_lineup_impact(game_id: str, team_tricode: str) -> str:
     """Compare starters vs bench (points, plus/minus, eFG%) and who is on court right now."""
     try:
@@ -203,13 +217,11 @@ def get_team_lineup_impact(game_id: str, team_tricode: str) -> str:
                            "bench": {"plusMinusTotal": -14, "efgPct": 41.3}}, indent=2)
 
 
-@mcp.tool()
+@offload(mcp)
 def get_recent_plays(game_id: str, n: int = 10) -> str:
     """Get the last N play-by-play actions (clock, team, description, running score)."""
     try:
-        from nba_api.live.nba.endpoints import playbyplay
-
-        actions = playbyplay.PlayByPlay(game_id=game_id).actions.get_dict()
+        actions = _fetch_actions(game_id)
         n = max(1, min(n, 25))
         return json.dumps([{
             "period": a.get("period"),
@@ -226,4 +238,4 @@ def get_recent_plays(game_id: str, n: int = 10) -> str:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    serve(mcp)

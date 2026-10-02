@@ -2,13 +2,10 @@
 """Live betting lines MCP server — wraps The Odds API for NBA spreads and totals."""
 import json
 import os
-import sys
-from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-sys.path.insert(0, str(Path(__file__).parent.parent))  # for booth.odds
-from _common import mock_enabled, unavailable
+from _common import mock_enabled, offload, serve, unavailable
 from booth import odds
 
 mcp = FastMCP("betting-lines")
@@ -70,7 +67,7 @@ def _live_events(game: str) -> list[dict] | str:
     return events
 
 
-@mcp.tool()
+@offload(mcp)
 def get_live_odds(game: str = "") -> str:
     """Current consensus odds (median across US books) — spread, total, moneyline.
     `game` may be team tricodes/names, e.g. "LAL @ BOS"; omit for all games. Spread is the home team's."""
@@ -82,7 +79,7 @@ def get_live_odds(game: str = "") -> str:
     return json.dumps([_describe(e) for e in events[:6]], indent=2)
 
 
-@mcp.tool()
+@offload(mcp)
 def get_line_movement(game: str) -> str:
     """How the line has moved since the booth first saw this game (opening → current).
     `game` is team tricodes/names, e.g. "LAL @ BOS"."""
@@ -105,7 +102,7 @@ def get_line_movement(game: str) -> str:
     return json.dumps(results, indent=2)
 
 
-@mcp.tool()
+@offload(mcp)
 def get_betting_context(game: str) -> str:
     """Derived context for a game: implied win probability, total, and spread relative to key numbers.
     `game` is team tricodes/names, e.g. "LAL @ BOS"."""
@@ -122,4 +119,4 @@ def get_betting_context(game: str) -> str:
 
 
 if __name__ == "__main__":
-    mcp.run()
+    serve(mcp)

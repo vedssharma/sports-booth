@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Historical NBA RAG MCP server — ChromaDB + sentence-transformers for semantic search."""
 import json
+import sys
+import threading
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
-from _common import mock_enabled, unavailable
+from _common import mock_enabled, offload, serve, unavailable
 
 DB_PATH = str(Path(__file__).parent.parent / "rag" / "chroma_db")
 COLLECTION_NAME = "nba_history"
@@ -15,17 +17,21 @@ mcp = FastMCP("nba-rag")
 
 _collection = None
 _embedder = None
+_init_lock = threading.Lock()
 
 
 def _get_store():
+    # Tools run in worker threads and startup warmup runs in another: initialise exactly once.
     global _collection, _embedder
-    if _collection is None:
-        import chromadb
-        from sentence_transformers import SentenceTransformer
+    with _init_lock:
+        if _collection is None:
+            import chromadb
+            from sentence_transformers import SentenceTransformer
 
-        client = chromadb.PersistentClient(path=DB_PATH)
-        _collection = client.get_or_create_collection(COLLECTION_NAME)
-        _embedder = SentenceTransformer(EMBED_MODEL)
+            client = chromadb.PersistentClient(path=DB_PATH)
+            collection = client.get_or_create_collection(COLLECTION_NAME)
+            _embedder = SentenceTransformer(EMBED_MODEL)
+            _collection = collection  # publish only after everything loaded
     return _collection, _embedder
 
 
@@ -39,7 +45,7 @@ def _format_results(results: dict) -> list[dict]:
     return out
 
 
-@mcp.tool()
+@offload(mcp)
 def search_historical_games(query: str, n_results: int = 3) -> str:
     """Semantic search over NBA historical game facts, records, and milestone moments."""
     try:
@@ -78,7 +84,7 @@ def search_historical_games(query: str, n_results: int = 3) -> str:
         }, indent=2)
 
 
-@mcp.tool()
+@offload(mcp)
 def get_player_history(player_name: str) -> str:
     """Retrieve historical facts and records specifically about a player."""
     try:
@@ -110,7 +116,7 @@ def get_player_history(player_name: str) -> str:
         }, indent=2)
 
 
-@mcp.tool()
+@offload(mcp)
 def search_team_history(team_name: str, context: str = "") -> str:
     """Search for historical facts about a team, optionally filtered by context."""
     try:
@@ -142,5 +148,13 @@ def search_team_history(team_name: str, context: str = "") -> str:
         }, indent=2)
 
 
+def _warmup() -> None:
+    """Load Chroma + the embedding model once at startup instead of on the first event."""
+    try:
+        _get_store()
+    except Exception as e:  # tools will report the same error to the agent
+        print(f"RAG warmup failed: {e}", file=sys.stderr)
+
+
 if __name__ == "__main__":
-    mcp.run()
+    serve(mcp, warmup=_warmup)

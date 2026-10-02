@@ -19,6 +19,8 @@ load_dotenv()
 
 from booth.demo import demo_loop
 from booth.live import live_loop
+from booth.mcp_host import McpHost
+from booth.orchestrator import use_http_servers
 from booth.pipeline import process_event
 from booth.scheduler import EventScheduler
 from booth.server import app
@@ -30,10 +32,30 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--cli", action="store_true", help="CLI-only mode (no web server)")
     parser.add_argument("--interval", type=int, default=45, help="Seconds between polls/events (default: 45)")
     parser.add_argument("--port", type=int, default=8000, help="Web server port (default: 8000)")
+    parser.add_argument("--stdio-mcp", action="store_true",
+                        help="Spawn MCP servers per agent run (slower) instead of keeping them running")
     return parser.parse_args()
 
 
-async def _run(interval: int, cli_only: bool, demo: bool, port: int) -> None:
+async def _run(interval: int, cli_only: bool, demo: bool, port: int, stdio_mcp: bool) -> None:
+    host = None
+    if not stdio_mcp:
+        host = McpHost()
+        print("  Starting MCP servers…")
+        if await host.start():
+            use_http_servers(host.urls)
+        else:
+            print("  ⚠️  Falling back to per-query stdio MCP servers")
+            host = None
+
+    try:
+        await _serve(interval, cli_only, demo, port)
+    finally:
+        if host:
+            await host.stop()
+
+
+async def _serve(interval: int, cli_only: bool, demo: bool, port: int) -> None:
     if demo:
         # Demo plays its scripted events in order, waiting for each — no scheduler needed
         async def loop_fn() -> None:
@@ -76,7 +98,7 @@ def main() -> None:
     if args.demo:
         print("   ⚠️  Demo mode — using hardcoded Lakers vs Celtics events")
 
-    asyncio.run(_run(args.interval, args.cli, args.demo, args.port))
+    asyncio.run(_run(args.interval, args.cli, args.demo, args.port, args.stdio_mcp))
 
 
 if __name__ == "__main__":

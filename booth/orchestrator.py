@@ -92,8 +92,21 @@ DEGENERATE_PROMPT += DATA_INTEGRITY_RULES
 
 # ── MCP server config helpers ─────────────────────────────────────────────────
 
-def _mcp_config(server_script: str) -> dict:
-    script_path = str(ROOT / "mcp_servers" / server_script)
+SERVER_SCRIPTS = {"nba": "nba_server.py", "rag": "rag_server.py", "betting": "betting_server.py"}
+_http_urls: dict[str, str] = {}
+
+
+def use_http_servers(urls: dict[str, str]) -> None:
+    """Point agents at already-running MCP servers (see booth/mcp_host.py)."""
+    _http_urls.clear()
+    _http_urls.update(urls)
+
+
+def _mcp_config(name: str) -> dict:
+    if name in _http_urls:
+        return {"type": "http", "url": _http_urls[name]}
+    # Fallback: a fresh stdio subprocess per agent run.
+    script_path = str(ROOT / "mcp_servers" / SERVER_SCRIPTS[name])
     # Pass the mock flag explicitly: MCP clients don't always forward the full parent env.
     env = {k: os.environ[k] for k in ("BOOTH_MOCK_DATA", "ODDS_API_KEY") if k in os.environ}
     return {"type": "stdio", "command": sys.executable, "args": [script_path], "env": env}
@@ -115,7 +128,7 @@ async def _collect_text(aiter) -> str:
 async def run_analyst(event_text: str) -> str:
     options = ClaudeAgentOptions(
         system_prompt=ANALYST_PROMPT,
-        mcp_servers={"nba": _mcp_config("nba_server.py")},
+        mcp_servers={"nba": _mcp_config("nba")},
         model=MODEL,
         max_turns=10,  # may chain boxscore + recent plays + lineup split
         permission_mode="bypassPermissions",
@@ -126,7 +139,7 @@ async def run_analyst(event_text: str) -> str:
 async def run_historian(event_text: str) -> str:
     options = ClaudeAgentOptions(
         system_prompt=HISTORIAN_PROMPT,
-        mcp_servers={"rag": _mcp_config("rag_server.py")},
+        mcp_servers={"rag": _mcp_config("rag")},
         model=MODEL,
         max_turns=6,
         permission_mode="bypassPermissions",
@@ -137,7 +150,7 @@ async def run_historian(event_text: str) -> str:
 async def run_degenerate(event_text: str) -> str:
     options = ClaudeAgentOptions(
         system_prompt=DEGENERATE_PROMPT,
-        mcp_servers={"betting": _mcp_config("betting_server.py")},
+        mcp_servers={"betting": _mcp_config("betting")},
         model=MODEL,
         max_turns=6,
         permission_mode="bypassPermissions",
